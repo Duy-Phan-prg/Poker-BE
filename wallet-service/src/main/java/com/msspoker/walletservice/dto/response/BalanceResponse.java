@@ -7,5 +7,7 @@ import java.util.UUID;
 @Builder
 public record BalanceResponse(
         UUID accountId,
-        long balance
+        long balance,
+        long coinBalance,
+        long vipCoinBalance
 ) {}

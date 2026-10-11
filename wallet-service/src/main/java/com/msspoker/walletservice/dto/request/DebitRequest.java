@@ -23,5 +23,7 @@ public record DebitRequest(
         String refId,
 
         @NotBlank(message = "idempotencyKey is required")
-        String idempotencyKey
+        String idempotencyKey,
+
+        com.msspoker.walletservice.enums.CurrencyType currencyType
 ) {}

@@ -8,6 +8,8 @@ import com.msspoker.walletservice.dto.response.TransactionResponse;
 import com.msspoker.walletservice.dto.response.WalletResponse;
 import com.msspoker.walletservice.entity.Wallet;
 import com.msspoker.walletservice.entity.WalletTransaction;
+import com.msspoker.walletservice.enums.CurrencyType;
+import com.msspoker.walletservice.exception.WalletExceptions;
 import com.msspoker.walletservice.mapper.WalletMapper;
 import com.msspoker.walletservice.repository.WalletRepository;
 import com.msspoker.walletservice.repository.WalletTransactionRepository;
@@ -47,8 +49,9 @@ public class WalletServiceImpl implements WalletService {
             backoff = @Backoff(delay = 100, multiplier = 2)
     )
     public TransactionResponse credit(CreditRequest request) {
-        log.info("Processing credit: accountId={}, amount={}, reason={}, idempotencyKey={}",
-                request.accountId(), request.amount(), request.reason(), request.idempotencyKey());
+        CurrencyType currencyType = request.currencyType() != null ? request.currencyType() : CurrencyType.COIN;
+        log.info("Processing credit: accountId={}, amount={}, currencyType={}, reason={}, idempotencyKey={}",
+                request.accountId(), request.amount(), currencyType, request.reason(), request.idempotencyKey());
 
         Optional<WalletTransaction> existingTx = transactionRepository.findByIdempotencyKey(request.idempotencyKey());
         if (existingTx.isPresent()) {
@@ -56,15 +59,23 @@ public class WalletServiceImpl implements WalletService {
             return walletMapper.toTransactionResponse(existingTx.get());
         }
 
-        Wallet wallet = getOrCreateWallet(request.accountId());
-        long newBalance = wallet.getBalance() + request.amount();
-        wallet.setBalance(newBalance);
+        Wallet wallet = getOrCreateWalletForUpdate(request.accountId());
+
+        long newBalance;
+        if (currencyType == CurrencyType.VIP_COIN) {
+            newBalance = wallet.getVipCoinBalance() + request.amount();
+            wallet.setVipCoinBalance(newBalance);
+        } else {
+            newBalance = wallet.getCoinBalance() + request.amount();
+            wallet.setCoinBalance(newBalance);
+        }
         walletRepository.save(wallet);
 
         WalletTransaction tx = walletMapper.toCreditTransaction(request, newBalance);
+        tx.setCurrencyType(currencyType);
 
         tx = transactionRepository.save(tx);
-        log.info("Credit success: accountId={}, newBalance={}", request.accountId(), newBalance);
+        log.info("Credit success: accountId={}, currency={}, newBalance={}", request.accountId(), currencyType, newBalance);
         return walletMapper.toTransactionResponse(tx);
     }
 
@@ -76,8 +87,9 @@ public class WalletServiceImpl implements WalletService {
             backoff = @Backoff(delay = 100, multiplier = 2)
     )
     public TransactionResponse debit(DebitRequest request) {
-        log.info("Processing debit: accountId={}, amount={}, reason={}, idempotencyKey={}",
-                request.accountId(), request.amount(), request.reason(), request.idempotencyKey());
+        CurrencyType currencyType = request.currencyType() != null ? request.currencyType() : CurrencyType.COIN;
+        log.info("Processing debit: accountId={}, amount={}, currencyType={}, reason={}, idempotencyKey={}",
+                request.accountId(), request.amount(), currencyType, request.reason(), request.idempotencyKey());
 
         Optional<WalletTransaction> existingTx = transactionRepository.findByIdempotencyKey(request.idempotencyKey());
         if (existingTx.isPresent()) {
@@ -85,20 +97,30 @@ public class WalletServiceImpl implements WalletService {
             return walletMapper.toTransactionResponse(existingTx.get());
         }
 
-        Wallet wallet = getOrCreateWallet(request.accountId());
-
-
+        Wallet wallet = getOrCreateWalletForUpdate(request.accountId());
         final long requestAmount = request.amount();
-        debitValidators.forEach(validator -> validator.validate(wallet, requestAmount));
 
-        long newBalance = wallet.getBalance() - requestAmount;
-        wallet.setBalance(newBalance);
+        long newBalance;
+        if (currencyType == CurrencyType.VIP_COIN) {
+            if (wallet.getVipCoinBalance() < requestAmount) {
+                log.warn("Insufficient VIP_COIN: accountId={}, balance={}, required={}",
+                        wallet.getAccountId(), wallet.getVipCoinBalance(), requestAmount);
+                throw WalletExceptions.insufficientBalance();
+            }
+            newBalance = wallet.getVipCoinBalance() - requestAmount;
+            wallet.setVipCoinBalance(newBalance);
+        } else {
+            debitValidators.forEach(validator -> validator.validate(wallet, requestAmount));
+            newBalance = wallet.getCoinBalance() - requestAmount;
+            wallet.setCoinBalance(newBalance);
+        }
         walletRepository.save(wallet);
 
         WalletTransaction tx = walletMapper.toDebitTransaction(request, newBalance);
+        tx.setCurrencyType(currencyType);
 
         tx = transactionRepository.save(tx);
-        log.info("Debit success: accountId={}, newBalance={}", request.accountId(), newBalance);
+        log.info("Debit success: accountId={}, currency={}, newBalance={}", request.accountId(), currencyType, newBalance);
         return walletMapper.toTransactionResponse(tx);
     }
 
@@ -138,6 +160,16 @@ public class WalletServiceImpl implements WalletService {
 
     private Wallet getOrCreateWallet(UUID accountId) {
         return walletRepository.findByAccountId(accountId)
+                .orElseGet(() -> {
+                    log.info("Wallet not found for accountId={}. Initializing new wallet.", accountId);
+                    Wallet newWallet = walletMapper.toWallet(accountId, 0L);
+                    return walletRepository.save(newWallet);
+                });
+    }
+
+    private Wallet getOrCreateWalletForUpdate(UUID accountId) {
+        return walletRepository.findByAccountIdForUpdate(accountId)
+                .or(() -> walletRepository.findByAccountId(accountId))
                 .orElseGet(() -> {
                     log.info("Wallet not found for accountId={}. Initializing new wallet.", accountId);
                     Wallet newWallet = walletMapper.toWallet(accountId, 0L);

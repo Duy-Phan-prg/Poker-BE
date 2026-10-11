@@ -11,6 +11,7 @@ public record TransactionResponse(
         UUID id,
         UUID accountId,
         long amount,
+        com.msspoker.walletservice.enums.CurrencyType currencyType,
         TransactionReason reason,
         String refId,
         String idempotencyKey,

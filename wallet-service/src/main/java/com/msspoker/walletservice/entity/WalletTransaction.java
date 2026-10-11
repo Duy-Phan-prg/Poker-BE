@@ -39,6 +39,11 @@ public class WalletTransaction {
     private long amount;
 
     @Enumerated(EnumType.STRING)
+    @Column(name = "currency_type", length = 20, nullable = false, updatable = false)
+    @Builder.Default
+    private com.msspoker.walletservice.enums.CurrencyType currencyType = com.msspoker.walletservice.enums.CurrencyType.COIN;
+
+    @Enumerated(EnumType.STRING)
     @Column(name = "reason", length = 50, nullable = false, updatable = false)
     private TransactionReason reason;
 

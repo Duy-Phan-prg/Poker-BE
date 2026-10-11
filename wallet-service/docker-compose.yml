@@ -1,3 +1,5 @@
+name: wallet-service
+
 services:
   wallet-service:
     build:
@@ -15,6 +17,7 @@ services:
     depends_on:
       wallet-postgres:
         condition: service_healthy
+
 
   wallet-postgres:
     image: postgres:16

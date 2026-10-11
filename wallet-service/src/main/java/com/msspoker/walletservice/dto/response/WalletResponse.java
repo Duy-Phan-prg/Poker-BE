@@ -9,6 +9,8 @@ import java.util.UUID;
 public record WalletResponse(
         UUID accountId,
         long balance,
+        long coinBalance,
+        long vipCoinBalance,
         Instant createdAt,
         Instant updatedAt
 ) {}

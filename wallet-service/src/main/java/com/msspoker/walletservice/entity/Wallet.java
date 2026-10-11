@@ -34,12 +34,30 @@ public class Wallet {
     @Column(name = "account_id", nullable = false, unique = true, updatable = false)
     private UUID accountId;
 
-    @Column(name = "balance", nullable = false)
-    private long balance;
+    @Column(name = "coin_balance", nullable = false)
+    private long coinBalance;
+
+    @Column(name = "vip_coin_balance", nullable = false)
+    private long vipCoinBalance;
 
     @Version
     @Column(name = "version", nullable = false)
     private Long version;
+
+    public long getBalance() {
+        return this.coinBalance;
+    }
+
+    public void setBalance(long balance) {
+        this.coinBalance = balance;
+    }
+
+    public static class WalletBuilder {
+        public WalletBuilder balance(long balance) {
+            this.coinBalance = balance;
+            return this;
+        }
+    }
 
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;

@@ -17,20 +17,27 @@ public interface WalletMapper {
 
     TransactionResponse toTransactionResponse(WalletTransaction tx);
 
+    @Mapping(target = "balance", source = "coinBalance")
+    @Mapping(target = "coinBalance", source = "coinBalance")
+    @Mapping(target = "vipCoinBalance", source = "vipCoinBalance")
     WalletResponse toWalletResponse(Wallet wallet);
 
-    @Mapping(target = "balance", source = "balance")
+    @Mapping(target = "balance", source = "coinBalance")
+    @Mapping(target = "coinBalance", source = "coinBalance")
+    @Mapping(target = "vipCoinBalance", source = "vipCoinBalance")
     @Mapping(target = "accountId", source = "accountId")
     BalanceResponse toBalanceResponse(Wallet wallet);
 
     @Mapping(target = "id", ignore = true)
     @Mapping(target = "createdAt", ignore = true)
     @Mapping(target = "balanceAfter", source = "balanceAfter")
+    @Mapping(target = "currencyType", source = "request.currencyType")
     WalletTransaction toCreditTransaction(CreditRequest request, long balanceAfter);
 
     @Mapping(target = "id", ignore = true)
     @Mapping(target = "createdAt", ignore = true)
     @Mapping(target = "balanceAfter", source = "balanceAfter")
+    @Mapping(target = "currencyType", source = "request.currencyType")
     @Mapping(target = "amount", expression = "java(-request.amount())")
     WalletTransaction toDebitTransaction(DebitRequest request, long balanceAfter);
 
@@ -39,6 +46,7 @@ public interface WalletMapper {
     @Mapping(target = "createdAt", ignore = true)
     @Mapping(target = "updatedAt", ignore = true)
     @Mapping(target = "accountId", source = "accountId")
-    @Mapping(target = "balance", source = "balance")
+    @Mapping(target = "coinBalance", source = "balance")
+    @Mapping(target = "vipCoinBalance", constant = "0L")
     Wallet toWallet(UUID accountId, long balance);
 }
