@@ -12,11 +12,6 @@ import org.mapstruct.Mapping;
 
 import java.util.UUID;
 
-/**
- * MapStruct mapper cho wallet-service (Rule #8).
- * Tự động sinh implementation tại compile-time,
- * loại bỏ manual getter/setter mapping.
- */
 @Mapper(componentModel = "spring")
 public interface WalletMapper {
 
