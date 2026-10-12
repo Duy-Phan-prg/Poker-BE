@@ -1,0 +1,74 @@
+# Hoài Anh — kế hoạch triển khai ranking-service và FE
+
+Nguồn yêu cầu: `docs/SPEC.md` §2.3, §5, §6, §7.1, §7.2, §8, §9.4, §10, §12.
+Chỉ sở hữu `ranking-service`, FE `features/ranking`, `features/season`,
+`features/tutorial`, `features/admin/seasons`. Không chạy logic ván bài, không tự
+cộng xu, không đọc DB bạn bè. Thay đổi file của người khác (root compose, `common`,
+router/shared FE) phải hỏi chủ module trước. Custom Room và giải đấu nằm trong
+`competition-service/IMPLEMENTATION_PLAN.md`.
+
+Cấu trúc code theo `game-service`: package phẳng theo tầng, controller trả DTO,
+lỗi theo `ErrorResponse` §5.3 với tiền tố `RANK_`, MapStruct, Lombok, Flyway,
+PostgreSQL riêng trong `compose.yml`, test dùng H2.
+
+## Các đợt và tiêu chí hoàn thành
+
+0. **Khung module**: dependency, cấu hình, `ranking-db` riêng trên `ranking-net`,
+   xử lý lỗi chuẩn; `clean verify` qua với context test H2.
+1. **Dữ liệu và bậc rank**: migration `seasons`, `player_elo`, `elo_history`,
+   seed một mùa ACTIVE; tính bậc theo mốc §8, Elo không âm, Thần bài = top 50
+   Đại kiện tướng. Unit test ranh giới các mốc.
+2. **Event**: queue `ranking-service.account.registered` → tạo `player_elo` mùa
+   hiện tại; queue `ranking-service.match.finished` → chỉ `RANK` cập nhật Elo,
+   peak, chuỗi thắng (lọt top 3 liên tiếp)/thua, số trận; `elo_history`
+   unique `(accountId, matchId)` chống xử lý trùng. Test event trùng, mode khác RANK.
+3. **Thưởng top 3**: `credit` `RANK_REWARD` 3×/2×/1× phí, key
+   `rank-reward:{matchId}:{accountId}`; client ví qua interface, bản giả khi
+   wallet chưa merge; lỗi ví không làm mất thưởng (thử lại).
+4. **API nội bộ**: `GET /internal/ranking/{accountId}` →
+   `{ elo, tier, winStreak, lossStreak }`; `GET /internal/ranking/top?limit=32`.
+5. **API public**: bảng xếp hạng mùa hiện tại có phân trang, vị trí của mình,
+   mùa hiện tại (cho Sảnh chờ/Hồ sơ của Khanh).
+6. **FE MVP** `features/ranking`: màn Bảng xếp hạng (loading/empty/error).
+7. **GĐ2**: mùa giải (đóng mùa, giữ 50% Elo, quà dồn theo bậc, nhận quà,
+   `season_tier_rewards`, `season_reward_claims`, `SEASON_REWARD_AVAILABLE`);
+   BXH bạn bè; Tutorial (`POST /api/tutorial/complete`, `TUTORIAL_REWARD`, key
+   `tutorial:{accountId}`); Admin mùa giải/quà theo bậc và các màn FE tương ứng.
+
+Mỗi đợt dừng để review trước khi sang đợt sau. Commit theo Conventional Commits
+scope `ranking`, nhánh `hoaianh/ranking-...`, không push main.
+
+## Các lựa chọn được áp dụng
+
+- Tham số §8 nằm trong `ranking.*` của `application.properties`, chỉnh không sửa code.
+- Mặc định dev giống game: PostgreSQL `127.0.0.1:54331/ranking_db`, RabbitMQ dùng
+  chung `docker/compose.infra.yml` (`127.0.0.1:56729`).
+
+## Quyết định đã chốt với Hoài Anh
+
+- Elo và thưởng dùng nguyên bảng §8 theo thứ hạng, kể cả bàn ít hơn 6 người:
+  hạng 1..6 nhận +20/+10/+5/−5/−10/−15 (hạng sau 6 dùng giá trị cuối), top 3
+  nhận 3×/2×/1× phí. Bàn 2 người: +20/+10, thưởng 3×/2× phí.
+- Không thêm khóa ingress riêng: chỉ tin `X-User-Id`/`X-User-Role` do gateway gắn
+  (§5.1); `/internal/**` không mở qua gateway.
+- Root `docker-compose.yml` sửa lại dạng include trên nhánh riêng
+  `hoaianh/infra-compose-include`, chờ Khanh review.
+
+## Tiến độ
+
+- [x] Đợt 0: khung module.
+- [ ] Đợt 1: dữ liệu và bậc rank.
+- [ ] Đợt 2: event.
+- [ ] Đợt 3: thưởng top 3.
+- [ ] Đợt 4: API nội bộ.
+- [ ] Đợt 5: API public.
+- [ ] Đợt 6: FE Bảng xếp hạng.
+- [ ] Đợt 7: GĐ2.
+
+## Phụ thuộc và review trước khi merge
+
+- Khanh: `account.registered` (đã có trong auth-service), gateway/route
+  `/api/ranking/**`, `/api/seasons/**`, `/api/tutorial/**`.
+- Bảo: payload `match.finished` (đã có), quy tắc hòa thứ hạng khi bị loại cùng ván.
+- Tùng: `credit` (nhánh `feature/wallet-shop-service` chưa merge).
+- Duy: người gọi `/internal/ranking/{id}`; `/internal/friends` cho BXH bạn bè (GĐ2).
