@@ -1,22 +1,22 @@
 package com.msspoker.shopservice.service;
 
+import com.msspoker.shopservice.client.WalletClient;
 import com.msspoker.shopservice.dto.request.CreateProductRequest;
 import com.msspoker.shopservice.dto.request.UpdateProductRequest;
+import com.msspoker.shopservice.dto.response.InventoryItemResponse;
 import com.msspoker.shopservice.dto.response.PageResponse;
 import com.msspoker.shopservice.dto.response.ProductResponse;
 import com.msspoker.shopservice.entity.Category;
 import com.msspoker.shopservice.entity.Product;
 import com.msspoker.shopservice.enums.ProductTier;
 import com.msspoker.shopservice.exception.AppException;
+import com.msspoker.shopservice.mapper.InventoryMapper;
 import com.msspoker.shopservice.mapper.ProductMapper;
 import com.msspoker.shopservice.repository.CategoryRepository;
 import com.msspoker.shopservice.repository.InventoryItemRepository;
 import com.msspoker.shopservice.repository.ProductRepository;
 import com.msspoker.shopservice.service.impl.ProductServiceImpl;
-import com.msspoker.shopservice.validator.impl.CategoryExistsForProductValidator;
-import com.msspoker.shopservice.validator.impl.ProductExistsForDeleteValidator;
-import com.msspoker.shopservice.validator.impl.ProductExistsForUpdateValidator;
-import com.msspoker.shopservice.validator.impl.ProductExistsValidator;
+import com.msspoker.shopservice.validator.ProductValidator;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -40,6 +40,8 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -58,6 +60,12 @@ class ProductServiceImplTest {
     @Spy
     private ProductMapper productMapper = Mappers.getMapper(ProductMapper.class);
 
+    @Spy
+    private InventoryMapper inventoryMapper = Mappers.getMapper(InventoryMapper.class);
+
+    @Mock
+    private WalletClient walletClient;
+
     private ProductServiceImpl productService;
 
     private Category avatarFrameCategory;
@@ -66,15 +74,15 @@ class ProductServiceImplTest {
 
     @BeforeEach
     void setUp() {
+        ProductValidator productValidator = new ProductValidator(inventoryItemRepository);
         productService = new ProductServiceImpl(
                 productRepository,
                 categoryRepository,
                 inventoryItemRepository,
                 productMapper,
-                List.of(new ProductExistsValidator()),
-                List.of(new CategoryExistsForProductValidator()),
-                List.of(new ProductExistsForUpdateValidator()),
-                List.of(new ProductExistsForDeleteValidator())
+                inventoryMapper,
+                walletClient,
+                productValidator
         );
 
         avatarFrameCategory = Category.builder()
@@ -255,5 +263,35 @@ class ProductServiceImplTest {
         productService.deleteProduct(product1.getId());
 
         assertThat(product1.isDeleted()).isTrue();
+    }
+
+    @Test
+    @DisplayName("purchaseProduct thành công: trừ VIP Coin ví và cấp vật phẩm vào túi đồ")
+    void purchaseProductSuccess() {
+        UUID accountId = UUID.randomUUID();
+        product1.setPriceVipCoin(50L);
+        when(productRepository.findByIdAndIsDeletedFalse(product1.getId())).thenReturn(Optional.of(product1));
+        when(inventoryItemRepository.existsByAccountIdAndProductId(accountId, product1.getId())).thenReturn(false);
+        when(inventoryItemRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+
+        InventoryItemResponse response = productService.purchaseProduct(accountId, product1.getId());
+
+        assertThat(response).isNotNull();
+        assertThat(response.productId()).isEqualTo(product1.getId());
+        verify(walletClient).debitVipCoin(eq(accountId), eq(50L), eq(product1.getId().toString()), eq("PURCHASE:" + accountId + ":" + product1.getId()));
+        verify(inventoryItemRepository).save(any());
+    }
+
+    @Test
+    @DisplayName("purchaseProduct thất bại khi đã sở hữu vật phẩm")
+    void purchaseProductAlreadyOwnedThrows() {
+        UUID accountId = UUID.randomUUID();
+        product1.setPriceVipCoin(50L);
+        when(productRepository.findByIdAndIsDeletedFalse(product1.getId())).thenReturn(Optional.of(product1));
+        when(inventoryItemRepository.existsByAccountIdAndProductId(accountId, product1.getId())).thenReturn(true);
+
+        assertThatThrownBy(() -> productService.purchaseProduct(accountId, product1.getId()))
+                .isInstanceOf(AppException.class)
+                .hasMessageContaining("Bạn đã sở hữu");
     }
 }

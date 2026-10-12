@@ -15,5 +15,11 @@ public interface CoinBundleRepository extends JpaRepository<CoinBundle, UUID> {
 
     Optional<CoinBundle> findByCode(String code);
 
+    boolean existsByCode(String code);
+
+    boolean existsByCodeAndIdNot(String code, UUID id);
+
     List<CoinBundle> findByIsActiveTrueOrderBySortOrderAsc();
+
+    List<CoinBundle> findAllByOrderBySortOrderAsc();
 }

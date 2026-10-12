@@ -8,12 +8,9 @@ import com.msspoker.shopservice.entity.Category;
 import com.msspoker.shopservice.mapper.ProductMapper;
 import com.msspoker.shopservice.repository.CategoryRepository;
 import com.msspoker.shopservice.service.CategoryService;
-import com.msspoker.shopservice.validator.CreateCategoryValidator;
-import com.msspoker.shopservice.validator.DeleteCategoryValidator;
-import com.msspoker.shopservice.validator.UpdateCategoryValidator;
+import com.msspoker.shopservice.validator.CategoryValidator;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import com.msspoker.shopservice.exception.CategoryExceptions;
 import org.springframework.cache.annotation.CacheEvict;
 import org.springframework.cache.annotation.Cacheable;
 import org.springframework.cache.annotation.Caching;
@@ -31,9 +28,7 @@ public class CategoryServiceImpl implements CategoryService {
 
     private final CategoryRepository categoryRepository;
     private final ProductMapper productMapper;
-    private final List<CreateCategoryValidator> createCategoryValidators;
-    private final List<UpdateCategoryValidator> updateCategoryValidators;
-    private final List<DeleteCategoryValidator> deleteCategoryValidators;
+    private final CategoryValidator categoryValidator;
 
     @Override
     @Cacheable(value = RedisConfig.CACHE_CATEGORIES, key = "'all'")
@@ -51,7 +46,8 @@ public class CategoryServiceImpl implements CategoryService {
         String normalizedCode = request.code().trim().toUpperCase();
         CreateCategoryRequest normalizedRequest = new CreateCategoryRequest(normalizedCode, request.name().trim());
         log.info("Creating new category with code={}, name={}", normalizedCode, normalizedRequest.name());
-        createCategoryValidators.forEach(validator -> validator.validate(normalizedRequest));
+
+        categoryValidator.validateForCreate(normalizedRequest);
 
         Category category = productMapper.toCategory(normalizedRequest);
         category.setCode(normalizedCode);
@@ -69,17 +65,10 @@ public class CategoryServiceImpl implements CategoryService {
     public CategoryResponse updateCategory(UUID id, UpdateCategoryRequest request) {
         log.info("Updating category id={} with code={}, name={}", id, request.code(), request.name());
         Category category = categoryRepository.findById(id).orElse(null);
-        updateCategoryValidators.forEach(validator -> validator.validate(id, category, request));
 
-        String normalizedCode = request.code().trim().toUpperCase();
-        if (!normalizedCode.equalsIgnoreCase(category.getCode())) {
-            if (categoryRepository.existsByCodeAndIdNot(normalizedCode, id)) {
-                log.warn("Category code already exists for another category: {}", normalizedCode);
-                throw CategoryExceptions.categoryCodeAlreadyExists();
-            }
-            category.setCode(normalizedCode);
-        }
+        categoryValidator.validateForUpdate(id, category, request);
 
+        category.setCode(request.code().trim().toUpperCase());
         category.setName(request.name().trim());
         return productMapper.toCategoryResponse(category);
     }
@@ -90,7 +79,8 @@ public class CategoryServiceImpl implements CategoryService {
     public void deleteCategory(UUID id) {
         log.info("Deleting category id={}", id);
         Category category = categoryRepository.findById(id).orElse(null);
-        deleteCategoryValidators.forEach(validator -> validator.validate(id, category));
+
+        categoryValidator.validateForDelete(id, category);
 
         categoryRepository.delete(category);
         log.info("Deleted category id={}", id);

@@ -25,7 +25,6 @@ services:
       - ranking-service
       - competition-service
 
-
   identity-service:
     build:
       context: .
@@ -33,6 +32,7 @@ services:
         MODULE: identity-service
     ports:
       - "${IDENTITY_SERVICE_PORT:-8081}:8081"
+
   game-service:
     build:
       context: .
@@ -40,6 +40,7 @@ services:
         MODULE: game-service
     ports:
       - "${GAME_SERVICE_PORT:-8082}:8082"
+
   matchmaking-service:
     build:
       context: .
@@ -47,6 +48,7 @@ services:
         MODULE: matchmaking-service
     ports:
       - "${MATCHMAKING_SERVICE_PORT:-8083}:8083"
+
   social-service:
     build:
       context: .
@@ -54,6 +56,7 @@ services:
         MODULE: social-service
     ports:
       - "${SOCIAL_SERVICE_PORT:-8084}:8084"
+
   chat-service:
     build:
       context: .
@@ -61,6 +64,7 @@ services:
         MODULE: chat-service
     ports:
       - "${CHAT_SERVICE_PORT:-8085}:8085"
+
   ranking-service:
     build:
       context: .
@@ -68,6 +72,7 @@ services:
         MODULE: ranking-service
     ports:
       - "${RANKING_SERVICE_PORT:-8086}:8086"
+
   competition-service:
     build:
       context: .
@@ -76,10 +81,43 @@ services:
     ports:
       - "${COMPETITION_SERVICE_PORT:-8087}:8087"
 
+  shop-service:
+    build:
+      context: .
+      args:
+        MODULE: shop-service
+    ports:
+      - "${SHOP_SERVICE_PORT:-8088}:8088"
+
+  wallet-service:
+    build:
+      context: .
+      args:
+        MODULE: wallet-service
+    ports:
+      - "${WALLET_SERVICE_PORT:-8089}:8089"
+
+  rabbitmq:
+    image: rabbitmq:3-management-alpine
+    container_name: rabbitmq
+    restart: unless-stopped
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    environment:
+      RABBITMQ_DEFAULT_USER: guest
+      RABBITMQ_DEFAULT_PASS: guest
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  rabbitmq-data:
 
 networks:
   default:
     name: poker-network
-
-
-

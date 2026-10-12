@@ -9,10 +9,7 @@ import com.msspoker.shopservice.mapper.ProductMapper;
 import com.msspoker.shopservice.repository.CategoryRepository;
 import com.msspoker.shopservice.repository.ProductRepository;
 import com.msspoker.shopservice.service.impl.CategoryServiceImpl;
-import com.msspoker.shopservice.validator.impl.CategoryCodeUniqueValidator;
-import com.msspoker.shopservice.validator.impl.CategoryDeletableValidator;
-import com.msspoker.shopservice.validator.impl.CategoryExistsDeleteValidator;
-import com.msspoker.shopservice.validator.impl.CategoryExistsUpdateValidator;
+import com.msspoker.shopservice.validator.CategoryValidator;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -51,12 +48,11 @@ class CategoryServiceImplTest {
 
     @BeforeEach
     void setUp() {
+        CategoryValidator categoryValidator = new CategoryValidator(categoryRepository, productRepository);
         categoryService = new CategoryServiceImpl(
                 categoryRepository,
                 productMapper,
-                List.of(new CategoryCodeUniqueValidator(categoryRepository)),
-                List.of(new CategoryExistsUpdateValidator()),
-                List.of(new CategoryExistsDeleteValidator(), new CategoryDeletableValidator(productRepository))
+                categoryValidator
         );
 
         category = Category.builder()

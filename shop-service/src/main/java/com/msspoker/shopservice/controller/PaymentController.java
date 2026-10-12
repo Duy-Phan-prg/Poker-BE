@@ -90,4 +90,17 @@ public class PaymentController {
         OrderResponse order = orderService.cancelOrder(accountId, orderId);
         return ResponseEntity.ok(ApiResponse.success("Hủy đơn hàng thành công", order));
     }
+
+    @PostMapping("/orders/{orderId}/sync")
+    @Operation(summary = "Kiểm tra và đồng bộ trạng thái thanh toán từ PayOS",
+               description = "Chủ động truy vấn cổng PayOS theo mã đơn để cập nhật trạng thái PAID và cộng VIP Coin vào ví (dùng khi test không mở webhook public)")
+    public ResponseEntity<ApiResponse<OrderResponse>> syncOrder(
+            @Parameter(name = "X-User-Id", description = "UUID tài khoản người dùng", in = ParameterIn.HEADER, required = true)
+            @RequestHeader("X-User-Id") UUID accountId,
+            @Parameter(description = "UUID của đơn hàng cần đồng bộ")
+            @PathVariable UUID orderId
+    ) {
+        OrderResponse order = orderService.syncOrder(accountId, orderId);
+        return ResponseEntity.ok(ApiResponse.success("Đồng bộ trạng thái đơn hàng thành công", order));
+    }
 }

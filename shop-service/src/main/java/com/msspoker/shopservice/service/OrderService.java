@@ -19,5 +19,7 @@ public interface OrderService {
 
     OrderResponse cancelOrder(UUID accountId, UUID orderId);
 
+    OrderResponse syncOrder(UUID accountId, UUID orderId);
+
     void handlePayosWebhook(Webhook webhook);
 }

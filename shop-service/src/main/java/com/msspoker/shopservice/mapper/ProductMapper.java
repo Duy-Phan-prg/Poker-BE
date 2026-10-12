@@ -20,48 +20,51 @@ public interface ProductMapper {
     @Mapping(target = "createdAt", ignore = true)
     Category toCategory(CreateCategoryRequest request);
 
-    @Mapping(target = "id", source = "product.id")
-    @Mapping(target = "categoryCode", source = "product.category.code")
-    @Mapping(target = "categoryName", source = "product.category.name")
-    @Mapping(target = "name", source = "product.name")
-    @Mapping(target = "description", source = "product.description")
-    @Mapping(target = "tier", source = "product.tier")
-    @Mapping(target = "priceVnd", source = "product.priceVnd")
-    @Mapping(target = "priceVipCoin", source = "product.priceVipCoin")
-    @Mapping(target = "assetUrl", source = "product.assetUrl")
-    @Mapping(target = "previewUrl", source = "product.previewUrl")
-    @Mapping(target = "metadata", source = "product.metadata")
-    @Mapping(target = "isExclusive", source = "product.exclusive")
-    @Mapping(target = "isOwned", source = "isOwned")
-    ProductResponse toProductResponse(Product product, boolean isOwned);
+    @Mapping(target = "categoryCode", source = "category.code")
+    @Mapping(target = "categoryName", source = "category.name")
+    @Mapping(target = "isExclusive", source = "exclusive")
+    @Mapping(target = "isOwned", ignore = true)
+    ProductResponse toProductResponse(Product product);
 
-    default ProductResponse toProductResponse(Product product) {
-        return toProductResponse(product, false);
+    default ProductResponse toProductResponse(Product product, boolean isOwned) {
+        ProductResponse response = toProductResponse(product);
+        return response != null ? response.withOwned(isOwned) : null;
     }
 
     @Mapping(target = "id", ignore = true)
-    @Mapping(target = "category", source = "category")
-    @Mapping(target = "name", source = "request.name")
-    @Mapping(target = "description", source = "request.description")
-    @Mapping(target = "tier", source = "request.tier")
-    @Mapping(target = "priceVnd", source = "request.priceVnd")
-    @Mapping(target = "assetUrl", source = "request.assetUrl")
-    @Mapping(target = "isExclusive", source = "request.isExclusive")
+    @Mapping(target = "category", ignore = true)
+    @Mapping(target = "isExclusive", source = "isExclusive")
     @Mapping(target = "isDeleted", constant = "false")
+    @Mapping(target = "priceVipCoin", ignore = true)
+    @Mapping(target = "previewUrl", ignore = true)
+    @Mapping(target = "metadata", ignore = true)
     @Mapping(target = "createdAt", ignore = true)
     @Mapping(target = "updatedAt", ignore = true)
-    Product toProduct(CreateProductRequest request, Category category);
+    Product toProduct(CreateProductRequest request);
+
+    default Product toProduct(CreateProductRequest request, Category category) {
+        Product product = toProduct(request);
+        if (product != null) {
+            product.setCategory(category);
+        }
+        return product;
+    }
 
     @Mapping(target = "id", ignore = true)
-    @Mapping(target = "category", source = "category")
-    @Mapping(target = "name", source = "request.name")
-    @Mapping(target = "description", source = "request.description")
-    @Mapping(target = "tier", source = "request.tier")
-    @Mapping(target = "priceVnd", source = "request.priceVnd")
-    @Mapping(target = "assetUrl", source = "request.assetUrl")
-    @Mapping(target = "exclusive", source = "request.isExclusive")
+    @Mapping(target = "category", ignore = true)
+    @Mapping(target = "exclusive", source = "isExclusive")
     @Mapping(target = "deleted", ignore = true)
+    @Mapping(target = "priceVipCoin", ignore = true)
+    @Mapping(target = "previewUrl", ignore = true)
+    @Mapping(target = "metadata", ignore = true)
     @Mapping(target = "createdAt", ignore = true)
     @Mapping(target = "updatedAt", ignore = true)
-    void updateProductFromRequest(@MappingTarget Product product, UpdateProductRequest request, Category category);
+    void updateProductFromRequest(@MappingTarget Product product, UpdateProductRequest request);
+
+    default void updateProductFromRequest(Product product, UpdateProductRequest request, Category category) {
+        updateProductFromRequest(product, request);
+        if (product != null) {
+            product.setCategory(category);
+        }
+    }
 }

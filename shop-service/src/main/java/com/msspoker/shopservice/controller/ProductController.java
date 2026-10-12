@@ -3,6 +3,7 @@ package com.msspoker.shopservice.controller;
 import com.msspoker.shopservice.dto.request.CreateProductRequest;
 import com.msspoker.shopservice.dto.request.UpdateProductRequest;
 import com.msspoker.shopservice.dto.response.ApiResponse;
+import com.msspoker.shopservice.dto.response.InventoryItemResponse;
 import com.msspoker.shopservice.dto.response.PageResponse;
 import com.msspoker.shopservice.dto.response.ProductResponse;
 import com.msspoker.shopservice.enums.ProductTier;
@@ -94,5 +95,16 @@ public class ProductController {
     ) {
         productService.deleteProduct(id);
         return ResponseEntity.ok(ApiResponse.success("Xóa sản phẩm thành công", null));
+    }
+
+    @PostMapping("/{id}/purchase")
+    @Operation(summary = "Mua vật phẩm bằng VIP Coin", description = "Trừ VIP Coin từ ví và cấp vật phẩm vào túi đồ của người chơi")
+    public ResponseEntity<ApiResponse<InventoryItemResponse>> purchaseProduct(
+            @Parameter(name = "X-User-Id", description = "UUID tài khoản người dùng", in = ParameterIn.HEADER, required = true)
+            @RequestHeader("X-User-Id") UUID accountId,
+            @Parameter(description = "ID sản phẩm cần mua") @PathVariable UUID id
+    ) {
+        InventoryItemResponse response = productService.purchaseProduct(accountId, id);
+        return ResponseEntity.ok(ApiResponse.success("Mua vật phẩm thành công", response));
     }
 }

@@ -18,7 +18,7 @@ import com.msspoker.shopservice.repository.InventoryItemRepository;
 import com.msspoker.shopservice.repository.OrderRepository;
 import com.msspoker.shopservice.repository.ProductRepository;
 import com.msspoker.shopservice.service.OrderService;
-import com.msspoker.shopservice.validator.CreateOrderValidator;
+import com.msspoker.shopservice.validator.OrderValidator;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -28,7 +28,9 @@ import vn.payos.PayOS;
 import vn.payos.exception.InvalidSignatureException;
 import vn.payos.model.v2.paymentRequests.CreatePaymentLinkRequest;
 import vn.payos.model.v2.paymentRequests.CreatePaymentLinkResponse;
+import vn.payos.model.v2.paymentRequests.PaymentLink;
 import vn.payos.model.v2.paymentRequests.PaymentLinkItem;
+import vn.payos.model.v2.paymentRequests.PaymentLinkStatus;
 import vn.payos.model.webhooks.Webhook;
 import vn.payos.model.webhooks.WebhookData;
 
@@ -48,7 +50,7 @@ public class OrderServiceImpl implements OrderService {
     private final CoinBundleRepository coinBundleRepository;
     private final InventoryItemRepository inventoryItemRepository;
     private final OrderMapper orderMapper;
-    private final List<CreateOrderValidator> createOrderValidators;
+    private final OrderValidator orderValidator;
     private final PayOS payOS;
     private final TopupEventProducer topupEventProducer;
 
@@ -69,8 +71,8 @@ public class OrderServiceImpl implements OrderService {
         Product product = productRepository.findByIdAndIsDeletedFalse(request.productId())
                 .orElseThrow(ProductExceptions::productNotFound);
 
-        // Run all strategy validators (purchasable, not owned, no active pending order)
-        createOrderValidators.forEach(v -> v.validate(accountId, request, product));
+        // Run validation qua OrderValidator
+        orderValidator.validateCreateOrder(accountId, request, product);
 
         // Generate atomic unique sequence-based PayOS order code
         Long orderCode = orderRepository.generatePayosOrderCode();
@@ -279,49 +281,90 @@ public class OrderServiceImpl implements OrderService {
             order.setPaidAt(Instant.now());
             orderRepository.save(order);
 
-            // 5. Fulfillment based on order type (Bundle Top-up vs Item Purchase)
-            if (order.getBundle() != null) {
-                long vipCoinAmount = order.getVipCoinAmount() != null
-                        ? order.getVipCoinAmount()
-                        : order.getBundle().getVipCoinAmount();
-
-                VipCoinTopupSuccessEvent event = VipCoinTopupSuccessEvent.builder()
-                        .orderId(order.getId())
-                        .accountId(order.getAccountId())
-                        .bundleId(order.getBundle().getId())
-                        .vipCoinAmount(vipCoinAmount)
-                        .payosOrderCode(order.getPayosOrderCode())
-                        .source("PAYOS_BUNDLE")
-                        .timestamp(Instant.now())
-                        .build();
-
-                topupEventProducer.sendTopupSuccessEvent(event);
-                log.info("Published VIP coin top-up event for bundle orderId={}, accountId={}, vipCoin={}",
-                        order.getId(), order.getAccountId(), vipCoinAmount);
-            } else if (order.getProduct() != null) {
-                String grantKey = "ORDER:" + order.getId();
-                boolean alreadyOwned = inventoryItemRepository.existsByAccountIdAndProductId(
-                        order.getAccountId(), order.getProduct().getId()
-                );
-
-                if (!alreadyOwned) {
-                    InventoryItem item = InventoryItem.builder()
-                            .accountId(order.getAccountId())
-                            .product(order.getProduct())
-                            .source(ItemSource.PURCHASE)
-                            .isEquipped(false)
-                            .grantKey(grantKey)
-                            .build();
-                    inventoryItemRepository.save(item);
-                    log.info("Granted productId={} to accountId={} from orderId={}",
-                            order.getProduct().getId(), order.getAccountId(), order.getId());
-                } else {
-                    log.warn("Account {} already owns product {} when fulfilling order {}. Skipping duplicate insert.",
-                            order.getAccountId(), order.getProduct().getId(), order.getId());
-                }
-            }
+            fulfillOrder(order);
         } else {
             log.warn("Payment webhook received non-success code={} for orderCode={}", webhook.getCode(), orderCode);
+        }
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public OrderResponse syncOrder(UUID accountId, UUID orderId) {
+        log.info("Chủ động đồng bộ trạng thái đơn hàng từ PayOS: orderId={}, accountId={}", orderId, accountId);
+        Order order = orderRepository.findById(orderId)
+                .filter(o -> o.getAccountId().equals(accountId))
+                .orElseThrow(OrderExceptions::orderNotFound);
+
+        if (order.getStatus() == OrderStatus.PAID) {
+            return orderMapper.toOrderResponse(order);
+        }
+
+        try {
+            PaymentLink link = payOS.paymentRequests().get(order.getPayosOrderCode());
+            PaymentLinkStatus status = link.getStatus();
+            log.info("Kết quả kiểm tra trạng thái từ PayOS: orderCode={}, status={}", order.getPayosOrderCode(), status);
+
+            if (PaymentLinkStatus.PAID.equals(status)) {
+                order.setStatus(OrderStatus.PAID);
+                order.setPaidAt(Instant.now());
+                orderRepository.save(order);
+                fulfillOrder(order);
+            } else if (PaymentLinkStatus.CANCELLED.equals(status)) {
+                order.setStatus(OrderStatus.CANCELLED);
+                orderRepository.save(order);
+            } else if (PaymentLinkStatus.EXPIRED.equals(status)) {
+                order.setStatus(OrderStatus.EXPIRED);
+                orderRepository.save(order);
+            }
+        } catch (Exception ex) {
+            log.error("Không thể lấy trạng thái đơn hàng từ cổng PayOS cho orderCode={}: {}",
+                    order.getPayosOrderCode(), ex.getMessage(), ex);
+            throw OrderExceptions.payosServiceError(ex.getMessage());
+        }
+
+        return orderMapper.toOrderResponse(order);
+    }
+
+    private void fulfillOrder(Order order) {
+        if (order.getBundle() != null) {
+            long vipCoinAmount = order.getVipCoinAmount() != null
+                    ? order.getVipCoinAmount()
+                    : order.getBundle().getVipCoinAmount();
+
+            VipCoinTopupSuccessEvent event = VipCoinTopupSuccessEvent.builder()
+                    .orderId(order.getId())
+                    .accountId(order.getAccountId())
+                    .bundleId(order.getBundle().getId())
+                    .vipCoinAmount(vipCoinAmount)
+                    .payosOrderCode(order.getPayosOrderCode())
+                    .source("PAYOS_BUNDLE")
+                    .timestamp(Instant.now())
+                    .build();
+
+            topupEventProducer.sendTopupSuccessEvent(event);
+            log.info("Đã phát sự kiện nạp VIP Coin cho bundle orderId={}, accountId={}, vipCoin={}",
+                    order.getId(), order.getAccountId(), vipCoinAmount);
+        } else if (order.getProduct() != null) {
+            String grantKey = "ORDER:" + order.getId();
+            boolean alreadyOwned = inventoryItemRepository.existsByAccountIdAndProductId(
+                    order.getAccountId(), order.getProduct().getId()
+            );
+
+            if (!alreadyOwned) {
+                InventoryItem item = InventoryItem.builder()
+                        .accountId(order.getAccountId())
+                        .product(order.getProduct())
+                        .source(ItemSource.PURCHASE)
+                        .isEquipped(false)
+                        .grantKey(grantKey)
+                        .build();
+                inventoryItemRepository.save(item);
+                log.info("Đã cấp vật phẩm productId={} cho accountId={} từ orderId={}",
+                        order.getProduct().getId(), order.getAccountId(), order.getId());
+            } else {
+                log.warn("Tài khoản {} đã sở hữu sản phẩm {} khi hoàn tất đơn hàng {}. Bỏ qua cấp trùng.",
+                        order.getAccountId(), order.getProduct().getId(), order.getId());
+            }
         }
     }
 }

@@ -11,7 +11,6 @@ import com.msspoker.shopservice.mapper.InventoryMapper;
 import com.msspoker.shopservice.repository.InventoryItemRepository;
 import com.msspoker.shopservice.repository.ProductRepository;
 import com.msspoker.shopservice.service.InventoryService;
-import com.msspoker.shopservice.validator.GrantValidator;
 import com.msspoker.shopservice.validator.InventoryValidator;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -31,8 +30,7 @@ public class InventoryServiceImpl implements InventoryService {
     private final InventoryItemRepository inventoryItemRepository;
     private final ProductRepository productRepository;
     private final InventoryMapper inventoryMapper;
-    private final List<InventoryValidator> inventoryValidators;
-    private final List<GrantValidator> grantValidators;
+    private final InventoryValidator inventoryValidator;
 
     @Override
     public List<InventoryItemResponse> getMyInventory(UUID accountId) {
@@ -46,7 +44,7 @@ public class InventoryServiceImpl implements InventoryService {
     public InventoryItemResponse getMyInventoryItem(UUID accountId, UUID productId) {
         log.debug("Fetching inventory item detail for accountId={}, productId={}", accountId, productId);
         InventoryItem item = inventoryItemRepository.findByAccountIdAndProductId(accountId, productId).orElse(null);
-        inventoryValidators.forEach(validator -> validator.validate(accountId, productId, item));
+        inventoryValidator.validateOwned(accountId, productId, item);
         return inventoryMapper.toInventoryItemResponse(item);
     }
 
@@ -56,18 +54,19 @@ public class InventoryServiceImpl implements InventoryService {
         log.info("Equipping item for accountId={}, productId={}", accountId, productId);
         InventoryItem itemToEquip = inventoryItemRepository.findByAccountIdAndProductId(accountId, productId).orElse(null);
 
-        inventoryValidators.forEach(validator -> validator.validate(accountId, productId, itemToEquip));
+        inventoryValidator.validateOwned(accountId, productId, itemToEquip);
 
         UUID categoryId = itemToEquip.getProduct().getCategory().getId();
 
         inventoryItemRepository.findEquippedByAccountIdAndCategoryId(accountId, categoryId)
                 .filter(equipped -> !equipped.getId().equals(itemToEquip.getId()))
                 .ifPresent(equipped -> {
-                    log.debug("Unequipping current active item id={} in category={}", equipped.getId(), categoryId);
+                    log.info("Unequipping current item {} in category {}", equipped.getId(), categoryId);
                     equipped.setEquipped(false);
                 });
 
         itemToEquip.setEquipped(true);
+        log.info("Equipped item {} successfully for accountId={}", itemToEquip.getId(), accountId);
         return inventoryMapper.toInventoryItemResponse(itemToEquip);
     }
 
@@ -77,12 +76,10 @@ public class InventoryServiceImpl implements InventoryService {
         log.info("Unequipping item for accountId={}, productId={}", accountId, productId);
         InventoryItem item = inventoryItemRepository.findByAccountIdAndProductId(accountId, productId).orElse(null);
 
-        inventoryValidators.forEach(validator -> validator.validate(accountId, productId, item));
+        inventoryValidator.validateOwned(accountId, productId, item);
 
-        if (item.isEquipped()) {
-            item.setEquipped(false);
-        }
-
+        item.setEquipped(false);
+        log.info("Unequipped item {} successfully for accountId={}", item.getId(), accountId);
         return inventoryMapper.toInventoryItemResponse(item);
     }
 
@@ -96,7 +93,7 @@ public class InventoryServiceImpl implements InventoryService {
     @Override
     @Transactional
     public GrantItemResponse grantItem(GrantItemRequest request) {
-        log.info("Processing grant item request for accountId={}, productId={}, idempotencyKey={}",
+        log.info("Processing grantItem request: accountId={}, productId={}, idempotencyKey={}",
                 request.accountId(), request.productId(), request.idempotencyKey());
 
         Optional<InventoryItem> existingByKey = inventoryItemRepository.findByGrantKey(request.idempotencyKey());
@@ -123,7 +120,7 @@ public class InventoryServiceImpl implements InventoryService {
 
         Product product = productRepository.findByIdAndIsDeletedFalse(request.productId()).orElse(null);
 
-        grantValidators.forEach(validator -> validator.validate(request, product));
+        inventoryValidator.validateForGrant(request, product);
 
         InventoryItem newItem = inventoryMapper.toInventoryItem(request, product, ItemSource.REWARD);
         InventoryItem savedItem = inventoryItemRepository.save(newItem);

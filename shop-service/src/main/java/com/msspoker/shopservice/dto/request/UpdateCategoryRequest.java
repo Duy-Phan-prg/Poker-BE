@@ -9,7 +9,7 @@ import lombok.Builder;
 public record UpdateCategoryRequest(
         @NotBlank(message = "Mã danh mục không được để trống")
         @Size(max = 50, message = "Mã danh mục không được vượt quá 50 ký tự")
-        @Pattern(regexp = "ABC", message = "Mã danh mục chỉ được chứa chữ cái, số và dấu gạch dưới")
+        @Pattern(regexp = "^[A-Za-z0-9_]+$", message = "Mã danh mục chỉ được chứa chữ cái, số và dấu gạch dưới")
         String code,
 
         @NotBlank(message = "Tên danh mục không được để trống")

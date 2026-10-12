@@ -19,7 +19,7 @@ import com.msspoker.shopservice.repository.InventoryItemRepository;
 import com.msspoker.shopservice.repository.OrderRepository;
 import com.msspoker.shopservice.repository.ProductRepository;
 import com.msspoker.shopservice.service.impl.OrderServiceImpl;
-import com.msspoker.shopservice.validator.CreateOrderValidator;
+import com.msspoker.shopservice.validator.OrderValidator;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -86,7 +86,7 @@ class OrderServiceImplTest {
     @Mock
     private WebhooksService webhooksService;
 
-    private List<CreateOrderValidator> createOrderValidators = new ArrayList<>();
+    private OrderValidator orderValidator;
 
     private OrderServiceImpl orderService;
 
@@ -97,6 +97,7 @@ class OrderServiceImplTest {
     @BeforeEach
     void setUp() {
         accountId = UUID.randomUUID();
+        orderValidator = new OrderValidator(inventoryItemRepository, orderRepository);
 
         Category category = Category.builder()
                 .id(UUID.randomUUID())
@@ -134,7 +135,7 @@ class OrderServiceImplTest {
                 coinBundleRepository,
                 inventoryItemRepository,
                 orderMapper,
-                createOrderValidators,
+                orderValidator,
                 payOS,
                 topupEventProducer
         );

@@ -16,7 +16,7 @@ import java.util.List;
 @RestController
 @RequestMapping("/api/shop/bundles")
 @RequiredArgsConstructor
-@Tag(name = "Coin Bundles APIs", description = "Các API hiển thị danh sách gói nạp VIP Coin theo chuẩn Riot Games")
+@Tag(name = "Coin Bundles APIs", description = "Các API hiển thị danh sách gói nạp VIP Coin")
 public class CoinBundleController {
 
     private final CoinBundleService coinBundleService;

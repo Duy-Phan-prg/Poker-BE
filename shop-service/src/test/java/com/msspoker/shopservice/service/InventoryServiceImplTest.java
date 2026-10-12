@@ -30,6 +30,8 @@ import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
+import com.msspoker.shopservice.validator.InventoryValidator;
+
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
@@ -64,8 +66,7 @@ class InventoryServiceImplTest {
                 inventoryItemRepository,
                 productRepository,
                 inventoryMapper,
-                List.of(new com.msspoker.shopservice.validator.impl.OwnedItemValidator()),
-                List.of(new com.msspoker.shopservice.validator.impl.ProductExistsGrantValidator())
+                new InventoryValidator()
         );
 
         accountId = UUID.randomUUID();

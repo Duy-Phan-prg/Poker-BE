@@ -1,23 +1,29 @@
 package com.msspoker.shopservice.validator;
 
+import com.msspoker.shopservice.dto.request.GrantItemRequest;
 import com.msspoker.shopservice.entity.InventoryItem;
+import com.msspoker.shopservice.entity.Product;
+import com.msspoker.shopservice.exception.InventoryExceptions;
+import com.msspoker.shopservice.exception.ProductExceptions;
+import org.springframework.stereotype.Component;
 
 import java.util.UUID;
 
 /**
- * Business validation interface cho các thao tác với túi đồ (Rule #15 — Tier 2).
- * Mỗi rule nghiệp vụ = 1 @Component implement interface này.
- * Service inject List<InventoryValidator> và loop qua tất cả validators.
+ * Validator tập trung toàn bộ các quy tắc nghiệp vụ cho Inventory.
  */
-public interface InventoryValidator {
+@Component
+public class InventoryValidator {
 
-    /**
-     * Kiểm tra điều kiện nghiệp vụ của vật phẩm trong túi đồ.
-     *
-     * @param accountId  
-     * @param productId 
-     * @param item       
-     * @throws com.msspoker.shopservice.exception.AppException 
-     */
-    void validate(UUID accountId, UUID productId, InventoryItem item);
+    public void validateOwned(UUID accountId, UUID productId, InventoryItem item) {
+        if (item == null) {
+            throw InventoryExceptions.itemNotOwned();
+        }
+    }
+
+    public void validateForGrant(GrantItemRequest request, Product product) {
+        if (product == null || product.isDeleted()) {
+            throw ProductExceptions.productNotFound();
+        }
+    }
 }

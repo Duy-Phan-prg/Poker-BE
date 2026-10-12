@@ -33,4 +33,20 @@ public final class ProductExceptions {
                 "Bạn đã sở hữu vật phẩm này rồi."
         );
     }
+
+    public static AppException insufficientVipCoin() {
+        return AppException.of(
+                HttpStatus.BAD_REQUEST,
+                "WALLET_INSUFFICIENT_BALANCE",
+                "Số dư VIP Coin trong ví không đủ để mua vật phẩm này."
+        );
+    }
+
+    public static AppException productNoVipPrice() {
+        return AppException.of(
+                HttpStatus.BAD_REQUEST,
+                "SHOP_PRODUCT_NO_VIP_PRICE",
+                "Sản phẩm này không hỗ trợ mua bằng VIP Coin."
+        );
+    }
 }

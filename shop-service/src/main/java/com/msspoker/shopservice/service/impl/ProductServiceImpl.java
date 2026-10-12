@@ -1,22 +1,25 @@
 package com.msspoker.shopservice.service.impl;
 
+import com.msspoker.shopservice.client.WalletClient;
 import com.msspoker.shopservice.config.RedisConfig;
 import com.msspoker.shopservice.dto.request.CreateProductRequest;
 import com.msspoker.shopservice.dto.request.UpdateProductRequest;
+import com.msspoker.shopservice.dto.response.InventoryItemResponse;
 import com.msspoker.shopservice.dto.response.PageResponse;
 import com.msspoker.shopservice.dto.response.ProductResponse;
 import com.msspoker.shopservice.entity.Category;
+import com.msspoker.shopservice.entity.InventoryItem;
 import com.msspoker.shopservice.entity.Product;
+import com.msspoker.shopservice.enums.ItemSource;
 import com.msspoker.shopservice.enums.ProductTier;
+import com.msspoker.shopservice.exception.ProductExceptions;
+import com.msspoker.shopservice.mapper.InventoryMapper;
 import com.msspoker.shopservice.mapper.ProductMapper;
 import com.msspoker.shopservice.repository.CategoryRepository;
 import com.msspoker.shopservice.repository.InventoryItemRepository;
 import com.msspoker.shopservice.repository.ProductRepository;
 import com.msspoker.shopservice.service.ProductService;
-import com.msspoker.shopservice.validator.CreateProductValidator;
-import com.msspoker.shopservice.validator.DeleteProductValidator;
 import com.msspoker.shopservice.validator.ProductValidator;
-import com.msspoker.shopservice.validator.UpdateProductValidator;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -47,16 +50,13 @@ public class ProductServiceImpl implements ProductService {
     private final CategoryRepository categoryRepository;
     private final InventoryItemRepository inventoryItemRepository;
     private final ProductMapper productMapper;
-
-    private final List<ProductValidator> productValidators;
-    private final List<CreateProductValidator> createProductValidators;
-    private final List<UpdateProductValidator> updateProductValidators;
-    private final List<DeleteProductValidator> deleteProductValidators;
+    private final InventoryMapper inventoryMapper;
+    private final WalletClient walletClient;
+    private final ProductValidator productValidator;
 
     @Autowired
     @Lazy
     private ProductServiceImpl self;
-
 
     @Override
     public PageResponse<ProductResponse> getProducts(String categoryCode, ProductTier tier, Pageable pageable, UUID accountId) {
@@ -90,11 +90,6 @@ public class ProductServiceImpl implements ProductService {
         );
     }
 
-    /**
-     * Cache toàn bộ trang catalog sản phẩm (chưa gắn user ownership) trên Redis.
-     * Key được phân bổ theo category, tier và safePageable (page, size, sort).
-     * Phục vụ hàng triệu lượt đọc từ khách và người chơi mà không cần query lại database.
-     */
     @Cacheable(
             value = RedisConfig.CACHE_PRODUCTS_CATALOG,
             key = "(#categoryCode != null ? #categoryCode : 'ALL') + ':' + (#tier != null ? #tier : 'ALL') + ':' + #safePageable.pageNumber + ':' + #safePageable.pageSize + ':' + #safePageable.sort"
@@ -123,7 +118,6 @@ public class ProductServiceImpl implements ProductService {
             return PageRequest.of(safePage, safeSize);
         }
 
-
         List<Sort.Order> validOrders = new ArrayList<>();
         for (Sort.Order order : pageable.getSort()) {
             if (ALLOWED_SORT_PROPERTIES.contains(order.getProperty())) {
@@ -135,7 +129,6 @@ public class ProductServiceImpl implements ProductService {
         return PageRequest.of(safePage, safeSize, safeSort);
     }
 
-
     @Override
     public ProductResponse getProductDetail(UUID id, UUID accountId) {
         log.debug("Fetching product detail for id={}, accountId={}", id, accountId);
@@ -146,14 +139,11 @@ public class ProductServiceImpl implements ProductService {
         return productMapper.toProductResponse(product, isOwned);
     }
 
-    /**
-     * Cache chi tiết sản phẩm trên Redis theo product id để phục vụ lượng truy cập lớn.
-     */
     @Cacheable(value = RedisConfig.CACHE_PRODUCTS, key = "#id")
     public Product getProductEntityCached(UUID id) {
         log.debug("Querying product from database (cache miss): id={}", id);
         Product product = productRepository.findByIdAndIsDeletedFalse(id).orElse(null);
-        productValidators.forEach(validator -> validator.validate(id, product));
+        productValidator.validateExists(id, product);
         return product;
     }
 
@@ -163,7 +153,7 @@ public class ProductServiceImpl implements ProductService {
     public ProductResponse createProduct(CreateProductRequest request) {
         log.info("Creating new product with name={}, categoryId={}", request.name(), request.categoryId());
         Category category = categoryRepository.findById(request.categoryId()).orElse(null);
-        createProductValidators.forEach(validator -> validator.validate(request, category));
+        productValidator.validateForCreate(request, category);
 
         Product product = productMapper.toProduct(request, category);
         Product saved = productRepository.save(product);
@@ -182,7 +172,7 @@ public class ProductServiceImpl implements ProductService {
         Product product = productRepository.findByIdAndIsDeletedFalse(id).orElse(null);
         Category category = categoryRepository.findById(request.categoryId()).orElse(null);
 
-        updateProductValidators.forEach(validator -> validator.validate(id, product, category, request));
+        productValidator.validateForUpdate(id, product, category);
 
         productMapper.updateProductFromRequest(product, request, category);
         log.info("Updated product id={} successfully", id);
@@ -198,9 +188,34 @@ public class ProductServiceImpl implements ProductService {
     public void deleteProduct(UUID id) {
         log.info("Soft-deleting product id={}", id);
         Product product = productRepository.findByIdAndIsDeletedFalse(id).orElse(null);
-        deleteProductValidators.forEach(validator -> validator.validate(id, product));
+        productValidator.validateForDelete(id, product);
 
         product.setDeleted(true);
         log.info("Soft-deleted product id={}", id);
+    }
+
+    @Override
+    @Transactional
+    public InventoryItemResponse purchaseProduct(UUID accountId, UUID productId) {
+        log.info("Processing purchase for accountId={}, productId={}", accountId, productId);
+
+        Product product = productRepository.findByIdAndIsDeletedFalse(productId).orElse(null);
+        productValidator.validateForPurchase(accountId, product);
+
+        String grantKey = "PURCHASE:" + accountId + ":" + productId;
+
+        // Trừ tiền qua WalletClient
+        walletClient.debitVipCoin(
+                accountId,
+                product.getPriceVipCoin(),
+                productId.toString(),
+                grantKey
+        );
+
+        // MapStruct mapper
+        InventoryItem item = inventoryMapper.toInventoryItem(accountId, product, ItemSource.PURCHASE, grantKey);
+        InventoryItem savedItem = inventoryItemRepository.save(item);
+        log.info("Successfully granted productId={} to accountId={} in inventory", productId, accountId);
+        return inventoryMapper.toInventoryItemResponse(savedItem);
     }
 }

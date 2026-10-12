@@ -28,6 +28,7 @@ public class OrderReconciliationScheduler {
     private final OrderRepository orderRepository;
     private final InventoryItemRepository inventoryItemRepository;
     private final PayOS payOS;
+    private final com.msspoker.shopservice.producer.TopupEventProducer topupEventProducer;
 
     /**
      * Chạy định kỳ mỗi 5 phút để đối soát các đơn hàng PENDING đã quá thời gian 15 phút.
@@ -70,20 +71,38 @@ public class OrderReconciliationScheduler {
                 order.setPaidAt(Instant.now());
                 orderRepository.save(order);
 
-                // Grant inventory item
-                boolean alreadyOwned = inventoryItemRepository.existsByAccountIdAndProductId(
-                        order.getAccountId(), order.getProduct().getId()
-                );
-                if (!alreadyOwned) {
-                    InventoryItem item = InventoryItem.builder()
+                if (order.getBundle() != null) {
+                    long vipCoinAmount = order.getVipCoinAmount() != null
+                            ? order.getVipCoinAmount()
+                            : order.getBundle().getVipCoinAmount();
+
+                    com.msspoker.shopservice.event.VipCoinTopupSuccessEvent event = com.msspoker.shopservice.event.VipCoinTopupSuccessEvent.builder()
+                            .orderId(order.getId())
                             .accountId(order.getAccountId())
-                            .product(order.getProduct())
-                            .source(ItemSource.PURCHASE)
-                            .isEquipped(false)
-                            .grantKey("ORDER:" + order.getId())
+                            .bundleId(order.getBundle().getId())
+                            .vipCoinAmount(vipCoinAmount)
+                            .payosOrderCode(order.getPayosOrderCode())
+                            .source("PAYOS_BUNDLE")
+                            .timestamp(Instant.now())
                             .build();
-                    inventoryItemRepository.save(item);
-                    log.info("Fulfilled item for reconciled order {}", order.getId());
+
+                    topupEventProducer.sendTopupSuccessEvent(event);
+                    log.info("Fulfilled bundle top-up for reconciled order {}", order.getId());
+                } else if (order.getProduct() != null) {
+                    boolean alreadyOwned = inventoryItemRepository.existsByAccountIdAndProductId(
+                            order.getAccountId(), order.getProduct().getId()
+                    );
+                    if (!alreadyOwned) {
+                        InventoryItem item = InventoryItem.builder()
+                                .accountId(order.getAccountId())
+                                .product(order.getProduct())
+                                .source(ItemSource.PURCHASE)
+                                .isEquipped(false)
+                                .grantKey("ORDER:" + order.getId())
+                                .build();
+                        inventoryItemRepository.save(item);
+                        log.info("Fulfilled item for reconciled order {}", order.getId());
+                    }
                 }
             } else {
                 log.info("Expiring order code={} (PayOS status: {})", order.getPayosOrderCode(), status);
