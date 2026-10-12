@@ -35,10 +35,16 @@ class AuthServiceApplicationTests {
         JsonNode document = jsonMapper.readTree(body);
         assertThat(document.get("info").get("title").asString()).isEqualTo("Poker Auth Service API");
         JsonNode paths = document.get("paths");
-        assertThat(paths.size()).isEqualTo(3);
+        assertThat(paths.size()).isEqualTo(9);
         assertThat(paths.has("/api/auth/register")).isTrue();
         assertThat(paths.has("/api/auth/register/verify-otp")).isTrue();
         assertThat(paths.has("/api/auth/register/resend-otp")).isTrue();
+        // Spring supplies these arguments; Swagger must not ask clients to construct them.
+        for (String path : new String[]{"/api/auth/csrf", "/api/auth/me", "/api/auth/ws-token"}) {
+            JsonNode operation = paths.get(path).get("get");
+            assertThat(operation.path("parameters").size()).as(path + " parameters").isZero();
+            assertThat(operation.has("requestBody")).as(path + " request body").isFalse();
+        }
         JsonNode register = paths.get("/api/auth/register").get("post");
         assertThat(register.get("responses").has("201")).isTrue();
         assertThat(register.get("responses").has("400")).isTrue();

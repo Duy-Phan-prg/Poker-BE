@@ -1,11 +1,12 @@
 # auth-service
 
-Phase 2: đăng ký email/mật khẩu/tên hiển thị, xác nhận mật khẩu tại BE, OTP đăng ký,
-gửi lại OTP qua SMTP và event `account.registered` qua RabbitMQ với outbox.
-Port mặc định `8090`; `identity-service` giữ nguyên. Chưa triển khai login/refresh/logout,
-JWT/cookie, gateway nghiệp vụ, profile API hoặc FE.
+Phase 2–3: đăng ký/OTP qua SMTP, event `account.registered` qua RabbitMQ với outbox,
+login/refresh/logout bằng cookie HttpOnly và JWT RS256/JWKS.
+Port mặc định `8090`; `identity-service` giữ nguyên. Chưa triển khai gateway nghiệp vụ,
+chỉnh sửa profile, quên/reset mật khẩu hoặc FE.
 Tài liệu local trong `docs/` đang gitignore: [API reference](../docs/auth/api-reference.md),
-[review phase 2](../docs/auth/phase-2.md), [kế hoạch](../docs/auth/implementation-plan.md).
+[review phase 2](../docs/auth/phase-2.md), [kế hoạch](../docs/auth/implementation-plan.md),
+[chạy Docker và test Swagger](../docs/auth/local-development.md).
 
 ## Chạy auth riêng bằng Docker
 
@@ -54,7 +55,7 @@ docker compose --env-file .env -f auth-service/compose.dev.yml --profile app up 
 ```
 
 Không cần build lại image chỉ để đổi biến môi trường; `restart` đơn thuần không
-nạp lại cấu hình Compose mới. Tài khoản SMTP thực tế chưa được xác minh bằng việc gửi email.
+nạp lại cấu hình Compose mới. Khanh đã xác nhận test đăng ký/OTP bằng mail thật thành công.
 
 ### Mailpit tùy chọn
 
@@ -76,7 +77,7 @@ Root Compose dùng tên service `auth-mailpit`, cùng port nội bộ `1025` và
 ```bash
 docker compose --env-file .env -f auth-service/compose.dev.yml up -d postgres rabbitmq
 mvn -B -pl auth-service -am install -DskipTests
-# Export AUTH_* trong .env vào môi trường chạy Java trước khi chạy lệnh này.
+# Export AUTH_* và JWT_* trong .env vào môi trường chạy Java trước khi chạy lệnh này.
 mvn -pl auth-service spring-boot:run -Dspring-boot.run.profiles=local
 ```
 
@@ -118,7 +119,7 @@ port DB. Khi dùng root Compose, app kết nối tên service này trong mạng 
 không dùng URL localhost dành cho Java trên máy. Volume root và volume Compose dev
 là hai database khác nhau. Chọn một cách chạy app để tránh trùng port 8090.
 
-Flyway áp dụng V1, V2 và V3 khi khởi động.
+Flyway áp dụng V1–V4 khi khởi động; V4 thêm `refresh_tokens`, không sửa migration đã dùng.
 V2 đổi Profile sang khóa chính `account_id` lấy từ Account, thêm field tài khoản/hồ sơ;
 không sửa V1 đã commit. Nếu dữ liệu cũ có profile đã xóa nhưng Account còn hoạt động,
 V2 dừng để review dữ liệu thay vì tự làm profile đó xuất hiện lại.
@@ -169,6 +170,48 @@ Job mặc định 5000 ms/batch, tối đa 20 rows; timeout confirm 5 giây/even
 ACK phải có ít nhất một queue nhận; không chứng minh tất cả consumer đã sẵn sàng.
 Consumer chống trùng bằng `eventId`: crash sau ACK/trước DB commit có thể phát lại.
 Không gọi ví/cấp quà trong phase 2.
+
+## Test login/refresh/logout bằng Swagger
+
+1. Dùng tài khoản đã xác thực OTP. Mở nhóm **Phiên đăng nhập**.
+2. Gọi `GET /api/auth/csrf`, copy `result.token` vào **Authorize → csrfToken**.
+   Trình duyệt tự giữ cookie `XSRF-TOKEN`; khi mất cookie hoặc đổi trình duyệt, lấy lại CSRF token.
+3. Gọi `POST /api/auth/login` với `email`, `password`. Trình duyệt giữ cookie
+   `accessToken` và `refreshToken` HttpOnly; response chỉ chứa accountId/email/role và hạn token.
+4. Gọi `GET /api/auth/me` để xem danh tính và profile cơ bản.
+5. Gọi `POST /api/auth/refresh`: đổi cả hai token, giữ nguyên ngày hết hạn của phiên từ lần login.
+6. Gọi `POST /api/auth/logout`: thu hồi refresh token tại BE và xóa cả hai cookie.
+   `me` sau khi trình duyệt xóa cookie trả 401; thiết bị khác vẫn đăng nhập.
+
+Không cần nhập access JWT vào Authorize; mục Authorize là **CSRF token**.
+CSRF áp dụng cả login/refresh/logout; các API đăng ký/OTP vẫn public và không cần CSRF token.
+Local dùng HTTP, `AUTH_COOKIE_SECURE=false`, SameSite=Lax; khi deploy HTTPS đặt Secure=true
+và cấu hình CORS bằng origin FE thực tế. Không dùng wildcard CORS với cookie.
+
+FE `http://localhost:5173` dùng `credentials: "include"` với fetch hoặc
+`withCredentials: true` với Axios. Lấy CSRF token từ JSON, gửi header `X-XSRF-TOKEN`
+trong login/refresh/logout. F5 gọi `me`; nếu 401 thì gọi refresh rồi thử lại `me` một lần.
+Các request 401 đồng thời dùng chung một promise refresh; không chạy nhiều refresh song song.
+Nếu refresh trả 401 thì chuyển về login. Refresh lỗi không xóa cookie tự động để tránh
+request thua ghi đè cookie của request thắng. Hết 7 ngày từ login phải đăng nhập lại.
+Giới hạn login sai để phase sau theo xác nhận của Khanh; OTP vẫn giữ giới hạn riêng.
+
+`GET /.well-known/jwks.json` trả public RSA key, không trả private key.
+JWT có `iss`, `aud`, UUID `sub`, `role` (USER/ADMIN), `iat`, `nbf`, `exp`, `jti` và ký RS256.
+Issuer/audience mặc định `http://localhost:8090`/`poker`, cần thống nhất khi nối gateway/game ở phase 4.
+`GET /api/auth/ws-token` dùng access cookie để lấy JWT hiện tại cho STOMP
+`CONNECT` header `Authorization: Bearer <token>`. Giữ JWT trong bộ nhớ FE; không lưu localStorage.
+Endpoint chỉ chuẩn bị hợp đồng; chưa sửa game hoặc route gateway.
+
+Refresh token ngẫu nhiên 256 bit; DB chỉ lưu SHA-256 hash. Token cũ sau rotation bị từ chối,
+không có cơ chế tự thu hồi cả chuỗi hoặc logout all. Logout không chặn access JWT đã cấp:
+bản sao vẫn hợp lệ đến hạn, đúng phạm vi phase hiện tại.
+
+Khóa ký được tạo một lần khi `AUTH_JWT_GENERATE_KEY=true`; Compose lưu trong named volume
+`auth-keys` tại `/app/keys/jwt-private.pem`. Java trên host lưu ở `.local/auth/jwt-private.pem`,
+đã loại khỏi Git và Docker build context. Restart/recreate giữ cùng khóa; root/dev có volume riêng.
+Deploy phải cấp khóa RSA PKCS#8 riêng, tắt tự sinh bằng `AUTH_JWT_GENERATE_KEY=false`;
+chưa có xoay khóa hoặc nhiều khóa JWKS. Không xóa volume khóa để cập nhật app.
 
 ## Kiểm tra
 

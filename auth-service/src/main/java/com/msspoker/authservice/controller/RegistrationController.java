@@ -34,7 +34,7 @@ public class RegistrationController {
 
     @PostMapping("/register")
     @Operation(summary = "1. Đăng ký tài khoản", description = "Nhận email, password, confirmPassword và displayName. "
-            + "Gửi OTP qua email; mở Mailpit local để lấy mã. Email chờ xác thực đăng ký lại không thay dữ liệu "
+            + "Gửi OTP qua email (hoặc Mailpit nếu chọn cấu hình local). Email chờ xác thực đăng ký lại không thay dữ liệu "
             + "hoặc tự gửi mã mới; tiếp tục xác thực hoặc dùng API gửi lại OTP.")
     @ApiResponses({
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "201",

@@ -1,6 +1,6 @@
 # Poker-BE
 
-Backend dạng Maven multi-module cho dự án Poker. Trạng thái từng phần xem README của module: [game-service](game-service/README.md), [auth-service](auth-service/README.md). Auth đã có nền tảng database ở phase 1; API auth/JWT chưa triển khai.
+Backend dạng Maven multi-module cho dự án Poker. Trạng thái từng phần xem README của module: [game-service](game-service/README.md), [auth-service](auth-service/README.md). Auth đã có đăng ký/OTP qua email và login/refresh/logout bằng cookie HttpOnly, JWT RS256/JWKS; gateway nghiệp vụ chưa triển khai.
 
 ## Yêu cầu
 
@@ -60,7 +60,7 @@ Copy-Item .env.example .env
 docker compose up --build
 ```
 
-Các port public trong `.env` có thể đổi để tránh xung đột trên máy. Gateway có health endpoint tại `http://localhost:8080/actuator/health`; mỗi service cũng có `/actuator/health` trên port của mình. Auth chưa có endpoint nghiệp vụ nên các path auth hiện trả về 404. Root Compose có DB riêng cho auth; hạ tầng và cấu hình riêng của game xem README game trước khi chạy cả nhóm.
+Các port public trong `.env` có thể đổi để tránh xung đột trên máy. Gateway có health endpoint tại `http://localhost:8080/actuator/health`; mỗi service cũng có `/actuator/health` trên port của mình. Test auth trực tiếp bằng Swagger tại `http://localhost:8090/swagger-ui.html`; login/refresh/logout cần CSRF token theo README auth. Root Compose có DB riêng cho auth; hạ tầng và cấu hình riêng của game xem README game trước khi chạy cả nhóm.
 
 ## Migration
 
@@ -68,7 +68,7 @@ Mỗi service sở hữu database đặt script Flyway tại `src/main/resources
 
 ## Phạm vi hiện tại
 
-Ưu tiên một luồng Rank hoàn chỉnh trước rồi mở rộng các phần còn lại. Khanh phát triển toàn bộ phạm vi tài khoản trong `auth-service`; `identity-service` giữ nguyên và không triển khai nghiệp vụ trùng lặp. Xem [SPEC](docs/SPEC.md), [định nghĩa auth/gateway](docs/auth/definition.md) và [kế hoạch phase](docs/auth/implementation-plan.md) để phân biệt phần đã chốt với các quyết định còn cần debate. DTO và hợp đồng FE chi tiết sẽ được mô tả cùng lúc triển khai API auth.
+Ưu tiên một luồng Rank hoàn chỉnh trước rồi mở rộng các phần còn lại. Khanh phát triển toàn bộ phạm vi tài khoản trong `auth-service`; `identity-service` giữ nguyên và không triển khai nghiệp vụ trùng lặp. Xem [SPEC](docs/SPEC.md), [định nghĩa auth/gateway](docs/auth/definition.md) và [kế hoạch phase](docs/auth/implementation-plan.md) để phân biệt phần đã chốt với các quyết định còn cần debate. API auth và cách FE dùng cookie/CSRF đã mô tả trong README auth và API reference ở docs local.
 
 ## Quy tắc Git
 

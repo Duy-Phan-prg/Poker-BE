@@ -7,6 +7,13 @@ import org.springframework.http.HttpStatus;
 @Getter
 @RequiredArgsConstructor
 public enum ErrorCode {
+    AUTH_INVALID_CREDENTIALS(HttpStatus.UNAUTHORIZED, "Email hoặc mật khẩu không đúng."),
+    AUTH_UNAUTHENTICATED(HttpStatus.UNAUTHORIZED, "Vui lòng đăng nhập hoặc làm mới phiên đăng nhập."),
+    AUTH_REFRESH_INVALID(HttpStatus.UNAUTHORIZED, "Phiên đăng nhập đã hết hạn hoặc không còn hợp lệ."),
+    AUTH_ACCOUNT_UNAVAILABLE(HttpStatus.FORBIDDEN, "Tài khoản không thể đăng nhập."),
+    AUTH_CSRF_INVALID(HttpStatus.FORBIDDEN, "CSRF token không hợp lệ. Vui lòng lấy lại token và thử lại."),
+    AUTH_FORBIDDEN(HttpStatus.FORBIDDEN, "Bạn không có quyền truy cập tài nguyên này."),
+    AUTH_ORIGIN_NOT_ALLOWED(HttpStatus.FORBIDDEN, "Nguồn gửi yêu cầu không được phép."),
     AUTH_INVALID_REQUEST(HttpStatus.BAD_REQUEST, "Dữ liệu yêu cầu không hợp lệ."),
     AUTH_NOT_FOUND(HttpStatus.NOT_FOUND, "Không tìm thấy tài nguyên."),
     AUTH_METHOD_NOT_ALLOWED(HttpStatus.METHOD_NOT_ALLOWED, "Phương thức không được hỗ trợ."),
