@@ -14,10 +14,15 @@ services:
       - DB_NAME=wallet_db
       - DB_USERNAME=postgres
       - DB_PASSWORD=${DB_PASSWORD:-123456}
+      - RABBITMQ_HOST=rabbitmq
+      - RABBITMQ_PORT=5672
+      - RABBITMQ_USERNAME=${RABBITMQ_USERNAME:-guest}
+      - RABBITMQ_PASSWORD=${RABBITMQ_PASSWORD:-guest}
     depends_on:
       wallet-postgres:
         condition: service_healthy
-
+      rabbitmq:
+        condition: service_healthy
 
   wallet-postgres:
     image: postgres:16
@@ -38,10 +43,28 @@ services:
       timeout: 5s
       retries: 5
 
+  rabbitmq:
+    image: rabbitmq:3-management-alpine
+    container_name: rabbitmq
+    restart: unless-stopped
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USERNAME:-guest}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-guest}
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
 volumes:
   wallet-postgres-data:
+  rabbitmq-data:
 
 networks:
   default:
     name: poker-network
-

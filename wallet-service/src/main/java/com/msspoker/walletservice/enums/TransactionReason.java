@@ -15,5 +15,6 @@ public enum TransactionReason {
     ADMIN_ADJUST,
     TOPUP_BUNDLE_PAYOS,
     TOPUP_BUNDLE_DEV_MOCK,
+    TOPUP_BUNDLE_SANDBOX,
     SHOP_BUY_ITEM
 }
