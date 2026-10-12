@@ -13,8 +13,11 @@
 
 # Local configuration
 .env
+.local/
 *.log
 
 # OS
 .DS_Store
 Thumbs.db
+
+docs/
