@@ -4,6 +4,11 @@
 > Nguồn sự thật cao nhất vẫn là `docs/SPEC.md`. Nếu thay đổi API/event liên service,
 > phải cập nhật SPEC và được các service bị ảnh hưởng review trước khi merge.
 
+Tài liệu đi kèm:
+
+- `IMPLEMENTATION_PLAN.md`: thứ tự triển khai, tiêu chí hoàn thành và tiến độ hiện tại.
+- `RESEARCH_REFERENCES.md`: paper/tài liệu kỹ thuật và quyết định áp dụng vào dự án.
+
 ## 0. Căn cứ từ SPEC
 
 File này được triển khai trực tiếp từ các phần sau của `docs/SPEC.md`:
@@ -61,6 +66,61 @@ Service này **không được làm**:
 - Không lưu display name/avatar; frontend lấy qua Profile API.
 - Không tự phát WebSocket thông báo riêng; phát `notification.requested` để
   `social-service` đẩy realtime.
+
+### 1.1. Checklist bắt buộc theo SPEC §9.3
+
+Phần thuộc `matchmaking-service` phải được triển khai đúng theo checklist này:
+
+#### MVP
+
+- [ ] Hàng chờ Rank có API vào và hủy hàng chờ.
+- [ ] Lấy Elo và chuỗi thắng/thua từ `ranking-service`; không tự tính.
+- [ ] Ghép theo Elo và nới dần khoảng Elo khi thời gian chờ tăng.
+- [ ] Số người tối thiểu lấy từ config, không hard-code trong thuật toán.
+- [ ] Tạo proposal và cho người chơi chấp nhận trong đúng 10 giây.
+- [ ] Thu phí Rank qua Wallet sau khi tất cả thành viên chấp nhận.
+- [ ] Debit dùng key `rank-fee:{proposalId}:{accountId}`.
+- [ ] Một debit thất bại thì hoàn phí những người đã debit thành công.
+- [ ] Game CreateTable thất bại chắc chắn thì hoàn phí toàn bộ.
+- [ ] Người hợp lệ được đưa lại hàng chờ khi proposal thất bại/hết hạn.
+- [ ] Người decline hoặc không accept bị cooldown 2 phút theo config.
+- [ ] Hàng chờ Normal miễn phí và không gọi Wallet/Ranking.
+- [ ] Gọi `POST /internal/tables` của Game; không tự mở bàn.
+- [ ] Phát `MATCH_FOUND` và `MATCH_READY` bằng `notification.requested` để
+  `social-service` đẩy xuống frontend.
+- [ ] FE `features/matchmaking` có màn chờ và popup chấp nhận; phần FE được làm sau
+  khi API backend ổn định.
+
+#### Giai đoạn 2
+
+- [ ] Party: tạo, mời, kick, rời và chuyển chủ nếu hợp đồng được chốt.
+- [ ] Chỉ chủ Party được đưa Party vào hàng chờ Normal.
+- [ ] Party thiếu người được ghép thêm người lạ.
+
+#### Ngoài phạm vi Matchmaking
+
+- Bạn bè, block và `/internal/friends/**` thuộc `social-service`.
+- Presence, notification history và `/ws/social` thuộc `social-service`.
+- DIRECT/MATCH conversation, messages và `/ws/chat` thuộc `chat-service`.
+- `<ChatPanel conversationId>` thuộc FE `shared/chat/` và được triển khai cùng Chat.
+- Sticker/sound và kiểm tra cấm chat không được đặt trong Matchmaking.
+
+Không đưa entity, repository hoặc bảng của `social_db`/`chat_db` vào module này.
+
+### 1.2. Dependency và mock trong lúc chờ service khác
+
+Mọi dependency phải đi qua interface để production client và mock/dev client có thể
+thay thế nhau bằng profile/config; không viết `if (dev)` trong business service.
+
+| Dependency | Production | Mock/dev theo SPEC |
+|---|---|---|
+| Game CreateTable | Gọi `POST /internal/tables` | Trả `tableId` ngẫu nhiên; có thể phát `match.finished` giả sau 10 giây trong dev tool |
+| Ranking | Gọi `GET /internal/ranking/{accountId}` | Trả Elo `0`, streak `0` |
+| Wallet | Gọi balance/debit/credit thật | Luôn thành công nhưng vẫn kiểm tra idempotency key trong test |
+| Identity restrictions | Gọi restrictions thật | Trả không bị cấm |
+
+Mock chỉ được bật bằng profile `dev` hoặc trong test. Profile production không được
+fallback âm thầm sang mock khi dependency lỗi.
 
 ## 2. Công nghệ và lựa chọn triển khai
 
@@ -127,15 +187,11 @@ matchmaking-service/
     │   │   ├── MatchmakingServiceApplication.java
     │   │   ├── config/
     │   │   │   ├── MatchmakingProperties.java
-    │   │   │   ├── RedisConfig.java
-    │   │   │   ├── EventConfig.java
-    │   │   │   └── SchedulingConfig.java
+    │   │   │   └── TimeConfig.java
     │   │   ├── constant/
-    │   │   │   ├── MatchmakingHeaders.java
-    │   │   │   └── MatchmakingEventConstants.java
+    │   │   │   └── MatchmakingConstants.java
     │   │   ├── controller/
-    │   │   │   ├── MatchmakingController.java
-    │   │   │   └── MatchmakingJob.java
+    │   │   │   └── MatchmakingController.java
     │   │   ├── dto/
     │   │   │   ├── request/
     │   │   │   ├── response/
@@ -146,7 +202,7 @@ matchmaking-service/
     │   │   │   ├── WalletOperationEntity.java
     │   │   │   └── OutboxEntity.java
     │   │   ├── enums/
-    │   │   │   ├── GameMode.java
+    │   │   │   ├── MatchMode.java
     │   │   │   ├── ProposalStatus.java
     │   │   │   ├── PlayerProposalStatus.java
     │   │   │   ├── WalletOperationStatus.java
@@ -156,34 +212,32 @@ matchmaking-service/
     │   │   │   ├── MatchmakingExceptionHandler.java
     │   │   │   └── MatchmakingExceptions.java
     │   │   ├── mapper/
-    │   │   │   └── MatchmakingMapper.java
+    │   │   │   └── QueueStatusMapper.java
+    │   │   ├── model/
+    │   │   │   └── QueueEntry.java
     │   │   ├── repository/
     │   │   │   ├── MatchProposalRepository.java
     │   │   │   ├── MatchProposalPlayerRepository.java
     │   │   │   ├── WalletOperationRepository.java
     │   │   │   └── OutboxRepository.java
-    │   │   ├── security/
-    │   │   │   ├── MatchmakingIdentity.java
-    │   │   │   └── TrustedIngressFilter.java
     │   │   ├── service/
-    │   │   │   ├── MatchmakingService.java
+    │   │   │   ├── MatchmakingQueueService.java
     │   │   │   ├── QueueStore.java
-    │   │   │   ├── MatchFinder.java
-    │   │   │   ├── ProposalService.java
-    │   │   │   ├── FeeOrchestrator.java
-    │   │   │   ├── RankingClient.java
-    │   │   │   ├── WalletClient.java
     │   │   │   ├── GameClient.java
-    │   │   │   ├── RestrictionClient.java
-    │   │   │   └── event/OutboxPublisher.java
+    │   │   │   ├── NormalMatchCoordinator.java
+    │   │   │   └── ProposalPersistenceService.java
     │   │   ├── service/impl/
-    │   │   ├── store/redis/
+    │   │   │   ├── MatchmakingQueueServiceImpl.java
     │   │   │   ├── RedisQueueStore.java
-    │   │   │   ├── RedisProposalReservationStore.java
-    │   │   │   └── RedisMatchLock.java
+    │   │   │   ├── NormalMatchCoordinatorImpl.java
+    │   │   │   ├── ProposalPersistenceServiceImpl.java
+    │   │   │   ├── HttpGameClient.java
+    │   │   │   ├── StubGameClient.java
+    │   │   │   └── worker/
+    │   │   │       ├── NormalMatchWorker.java
+    │   │   │       └── NormalRecoveryWorker.java
     │   │   ├── validator/
-    │   │   │   ├── JoinQueueValidator.java
-    │   │   │   └── ProposalValidator.java
+    │   │   │   └── QueueModeValidator.java
     │   │   └── util/MatchmakingIds.java
     │   └── resources/
     │       ├── application.properties
@@ -197,6 +251,10 @@ matchmaking-service/
         │   └── contract/
         └── resources/application-test.properties
 ```
+
+Giống `game-service`, các package theo tầng nằm trực tiếp dưới package gốc. Chỉ tạo
+`security`, `websocket` hoặc package tích hợp khác khi Matchmaking thật sự có trách
+nhiệm đó; Matchmaking không sở hữu WebSocket theo SPEC nên không tạo package rỗng.
 
 Quy tắc phụ thuộc giữa các package:
 
