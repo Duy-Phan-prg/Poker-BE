@@ -14,4 +14,7 @@ public interface EloCalculator {
     boolean extendsWinStreak(int place);
 
     long reward(int place, long entryFee);
+
+    /** Elo kept into the next season: keepPercent of the final Elo, rounded down, never below the floor. */
+    int carryOver(int elo, int keepPercent);
 }

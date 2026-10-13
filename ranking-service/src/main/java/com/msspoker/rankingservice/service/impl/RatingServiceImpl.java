@@ -40,7 +40,7 @@ public class RatingServiceImpl implements RatingService {
     @Override
     public void accountRegistered(AccountRegisteredEvent event) {
         if (event == null || event.accountId() == null) throw RankingExceptions.invalidEvent();
-        player(seasons.active().getId(), event.accountId());
+        player(seasons.lockActive().getId(), event.accountId());
     }
 
     /** Only RANK changes Elo. Elo, history and pending rewards commit together; elo_history dedupes the match. */
@@ -49,7 +49,7 @@ public class RatingServiceImpl implements RatingService {
     public void matchFinished(MatchFinishedEvent event) {
         validator.validate(event);
         if (event.mode() != GameMode.RANK || history.existsByMatchId(event.matchId())) return;
-        UUID seasonId = seasons.active().getId();
+        UUID seasonId = seasons.lockActive().getId();
         Instant now = Instant.now();
         for (PlacementEvent placement : event.placements()) {
             PlayerEloEntity player = player(seasonId, placement.accountId());

@@ -24,6 +24,38 @@ public final class RankingExceptions {
         return new RankingApiException(RankingError.RANK_NOT_FOUND, HttpStatus.NOT_FOUND, "Chưa có mùa giải đang diễn ra.");
     }
 
+    public static IllegalStateException eventDeliveryFailed() {
+        return new IllegalStateException("Event chưa được chuyển tới queue nhận. Hệ thống sẽ gửi lại.");
+    }
+
+    public static RankingApiException seasonNotFound() {
+        return new RankingApiException(RankingError.RANK_NOT_FOUND, HttpStatus.NOT_FOUND, "Không tìm thấy mùa giải.");
+    }
+
+    public static RankingApiException noNextSeason() {
+        return new RankingApiException(RankingError.RANK_CONFLICT, HttpStatus.CONFLICT, "Chưa có mùa kế tiếp. Hãy tạo mùa mới trước khi đóng mùa hiện tại.");
+    }
+
+    public static RankingApiException seasonNotEnded() {
+        return new RankingApiException(RankingError.RANK_CONFLICT, HttpStatus.CONFLICT, "Mùa giải chưa kết thúc.");
+    }
+
+    public static RankingApiException seasonRewardsLocked() {
+        return new RankingApiException(RankingError.RANK_CONFLICT, HttpStatus.CONFLICT, "Không thể đổi quà của mùa đã kết thúc.");
+    }
+
+    public static RankingApiException duplicateTierReward() {
+        return new RankingApiException(RankingError.RANK_INVALID_REQUEST, HttpStatus.BAD_REQUEST, "Mỗi bậc chỉ có một mức quà xu và không lặp vật phẩm.");
+    }
+
+    public static RankingApiException noSeasonReward() {
+        return new RankingApiException(RankingError.RANK_NOT_FOUND, HttpStatus.NOT_FOUND, "Bạn không có quà ở mùa giải này.");
+    }
+
+    public static RankingApiException adminOnly() {
+        return new RankingApiException(RankingError.RANK_FORBIDDEN, HttpStatus.FORBIDDEN, "Chỉ quản trị viên được thực hiện thao tác này.");
+    }
+
     public static RankingApiException notFound() {
         return new RankingApiException(RankingError.RANK_NOT_FOUND, HttpStatus.NOT_FOUND, "Không tìm thấy tài nguyên.");
     }

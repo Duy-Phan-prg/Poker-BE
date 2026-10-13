@@ -54,4 +54,9 @@ public class EloCalculatorImpl implements EloCalculator {
         List<Long> multipliers = properties.getRewardMultipliers();
         return place >= 1 && place <= multipliers.size() ? entryFee * multipliers.get(place - 1) : 0;
     }
+
+    @Override
+    public int carryOver(int elo, int keepPercent) {
+        return Math.max(properties.getMinElo(), elo * keepPercent / 100);
+    }
 }

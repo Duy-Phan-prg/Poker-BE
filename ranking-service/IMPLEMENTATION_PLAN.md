@@ -55,6 +55,8 @@ scope `ranking`/`competition`, không push main.
   (§5.1); `/internal/**` không mở qua gateway.
 - Root `docker-compose.yml` (Khanh) được đưa lại về dạng include ngay trên
   `hoaianh/ranking-elo`, kèm `auth-service/compose.yml`; Khanh cần xem khi merge.
+- Quà mùa tính theo bậc lúc đóng mùa (không theo peak). Mùa tự đóng khi qua
+  `endAt` nếu admin đã tạo mùa kế tiếp; admin vẫn đóng tay được.
 
 ## Tiến độ
 
@@ -70,6 +72,13 @@ scope `ranking`/`competition`, không push main.
   xem `Poker-FE/docs/ranking-rooms-integration.md`). Lint/build qua; kiểm tra trên
   trình duyệt với ranking-service dev: mùa, vị trí của mình, top 3, dòng "You".
 - [ ] Đợt 7: GĐ2.
+  - [x] Mùa giải BE: V3 (`season_tier_rewards`, `season_reward_claims`,
+    `reward_grants`, `ranking_outbox`, `player_elo.final_tier`); Admin tạo mùa/quà,
+    đóng mùa tay hoặc tự động khi qua `endAt` và đã có mùa kế tiếp; bậc cuối mùa
+    chụp theo BXH (có Thần bài); giữ `resetPercent` Elo; quà dồn theo bậc, nhận một
+    lần, xu qua ví và skin qua shop với idempotencyKey; `SEASON_REWARD_AVAILABLE`.
+    29 test H2; chạy thật trên PostgreSQL (DB tạm) đóng mùa, nhận quà, gửi 6 khoản.
+  - [ ] Tutorial, BXH bạn bè, FE mùa giải/admin.
 
 ## Phụ thuộc và review trước khi merge
 

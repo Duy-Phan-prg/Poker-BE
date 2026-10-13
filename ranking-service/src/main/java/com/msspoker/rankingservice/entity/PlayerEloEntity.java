@@ -25,5 +25,7 @@ public class PlayerEloEntity {
     private int lossStreak;
     private int matchesPlayed;
     private Instant lastMatchAt;
+    /** Displayed tier (including CARD_GOD) captured when the season closed; null while it is active. */
+    @Enumerated(EnumType.STRING) private Tier finalTier;
     private boolean isDeleted;
 }

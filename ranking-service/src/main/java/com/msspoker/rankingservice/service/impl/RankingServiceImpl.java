@@ -1,6 +1,7 @@
 package com.msspoker.rankingservice.service.impl;
 
 import com.msspoker.rankingservice.config.RankingProperties;
+import com.msspoker.rankingservice.constant.RankingConstants;
 import com.msspoker.rankingservice.dto.response.MyRankingResponse;
 import com.msspoker.rankingservice.dto.response.PageResponse;
 import com.msspoker.rankingservice.dto.response.PlayerRankingResponse;
@@ -16,7 +17,6 @@ import com.msspoker.rankingservice.service.SeasonService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
-import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -28,9 +28,6 @@ import java.util.UUID;
 @Service
 @RequiredArgsConstructor
 public class RankingServiceImpl implements RankingService {
-    /** Must match PlayerEloRepository.countAhead. */
-    private static final Sort LEADERBOARD = Sort.by(Sort.Order.desc("currentElo"), Sort.Order.asc("accountId"));
-
     private final SeasonService seasons;
     private final PlayerEloRepository players;
     private final EloCalculator calculator;
@@ -76,7 +73,7 @@ public class RankingServiceImpl implements RankingService {
 
     private PageResponse<RankedPlayerResponse> board(int page, int size) {
         Page<PlayerEloEntity> result = players.findBySeasonIdAndIsDeletedFalse(seasons.active().getId(),
-                PageRequest.of(page, size, LEADERBOARD));
+                PageRequest.of(page, size, RankingConstants.LEADERBOARD_SORT));
         List<RankedPlayerResponse> content = new ArrayList<>();
         for (int i = 0; i < result.getNumberOfElements(); i++) {
             PlayerEloEntity player = result.getContent().get(i);

@@ -30,6 +30,7 @@ public interface RankingMapper {
     @Mapping(target = "lossStreak", ignore = true)
     @Mapping(target = "matchesPlayed", ignore = true)
     @Mapping(target = "lastMatchAt", ignore = true)
+    @Mapping(target = "finalTier", ignore = true)
     @Mapping(target = "deleted", ignore = true)
     PlayerEloEntity player(UUID seasonId, UUID accountId, int elo, Tier tier);
 

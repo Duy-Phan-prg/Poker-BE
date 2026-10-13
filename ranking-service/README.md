@@ -89,11 +89,42 @@ same transaction as the Elo update, then sent to wallet-service
 key `rank-reward:{matchId}:{accountId}`. A wallet outage leaves the reward
 pending; the dispatcher retries every 5 seconds with the same key.
 
+### Seasons and season rewards
+
+| Method | Endpoint | Behavior |
+| --- | --- | --- |
+| GET | `/api/seasons/{seasonId}/rewards` | Tier rewards `[{ tier, rewardType (COIN/PRODUCT), amount, productId }]` |
+| GET | `/api/seasons/rewards/me` | Ended seasons where the player reached a rewarded tier: `finalTier`, earned rewards, `claimed` |
+| POST | `/api/seasons/{seasonId}/rewards/claim` | Claims every reward up to the final tier; repeating returns the same claim |
+| GET | `/api/admin/seasons` | All seasons with rewards; `X-User-Role: ADMIN` |
+| POST | `/api/admin/seasons` | `{ name, startAt, endAt, resetPercent, rewards[] }` → UPCOMING season |
+| PUT | `/api/admin/seasons/{seasonId}/rewards` | Replaces rewards; refused once the season ended |
+| POST | `/api/admin/seasons/close` | Closes the active season now; needs an UPCOMING season |
+
+Closing a season (by the admin, or every minute once `endAt` passed and a next
+season exists) records each player's final tier in leaderboard order, so
+CARD_GOD is the top 50 Grand Champions at that moment. Each player starts the
+next season with `resetPercent` of the final Elo (default 50%, floor 0). Players
+whose final tier earns a reward receive `SEASON_REWARD_AVAILABLE` through
+`notification.requested` (outbox `ranking_outbox`, batches of 500 recipients).
+Without a next season the current one keeps running. Elo updates and closing
+lock the active season row, so no match result lands in a closed season.
+
+Rewards are cumulative (SPEC §2.3): reaching DIAMOND earns every reward from
+IRON to DIAMOND. A claim stores `season_reward_claims` and one `reward_grants`
+row per reward in one transaction; coins go to wallet-service with reason
+`SEASON_REWARD` and key `season-reward:{seasonId}-{TIER}:{accountId}`, skins go to
+shop-service `POST /internal/inventory/grant` with key
+`season-item:{seasonId}-{productId}:{accountId}`, retried until accepted. The seed
+season has proposed coin rewards from 50 (IRON) to 1000 (CARD_GOD).
+
 ## Production configuration
 
 - PostgreSQL: `RANKING_DB_URL`, `RANKING_DB_USER`, `RANKING_DB_PASSWORD`.
 - RabbitMQ: `RABBITMQ_HOST`, `RABBITMQ_PORT`, `RABBITMQ_USER`, `RABBITMQ_PASSWORD`.
 - Wallet: `WALLET_SERVICE_URL` (default `http://localhost:8089`).
+- Shop: `SHOP_SERVICE_URL` (default `http://localhost:8088`). In `dev`/`test` the
+  wallet and shop are logging stubs.
 - SPEC §8 parameters: `ranking.elo-by-place`, `ranking.tier-thresholds`,
   `ranking.reward-multipliers`, `ranking.win-streak-places`, `ranking.card-god-limit`,
   `ranking.min-elo`, `ranking.starting-elo` in `application.properties`.
@@ -104,7 +135,9 @@ pending; the dispatcher retries every 5 seconds with the same key.
 .\mvnw.cmd -pl ranking-service -am clean verify
 ```
 
-22 tests use test-only H2 and do not require Docker: tier boundaries, Elo
+29 tests use test-only H2 and do not require Docker: tier boundaries, Elo
 floor, places beyond six, Card God cut-off, duplicate events, non-RANK modes,
 invalid results, reward queueing and wallet outage retry, listener parsing with
-unknown fields, API contracts and leaderboard ordering.
+unknown fields, API contracts, leaderboard ordering, season closing and carry
+over, scheduled closing and activation, cumulative claims and grant retries.
+Season tests use their own H2 database because they close the seed season.
