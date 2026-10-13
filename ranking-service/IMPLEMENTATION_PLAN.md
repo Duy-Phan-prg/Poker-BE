@@ -35,8 +35,10 @@ PostgreSQL riêng trong `compose.yml`, test dùng H2.
    BXH bạn bè; Tutorial (`POST /api/tutorial/complete`, `TUTORIAL_REWARD`, key
    `tutorial:{accountId}`); Admin mùa giải/quà theo bậc và các màn FE tương ứng.
 
-Mỗi đợt dừng để review trước khi sang đợt sau. Commit theo Conventional Commits
-scope `ranking`, nhánh `hoaianh/ranking-...`, không push main.
+Mỗi đợt dừng để review trước khi sang đợt sau. Quy trình nhóm: mỗi thành viên có
+một nhánh riêng rồi merge vào `develop`; toàn bộ phần của Hoài Anh (ranking và
+competition) commit vào `hoaianh/ranking-elo`. Commit theo Conventional Commits với
+scope `ranking`/`competition`, không push main.
 
 ## Các lựa chọn được áp dụng
 
@@ -51,18 +53,22 @@ scope `ranking`, nhánh `hoaianh/ranking-...`, không push main.
   nhận 3×/2×/1× phí. Bàn 2 người: +20/+10, thưởng 3×/2× phí.
 - Không thêm khóa ingress riêng: chỉ tin `X-User-Id`/`X-User-Role` do gateway gắn
   (§5.1); `/internal/**` không mở qua gateway.
-- Root `docker-compose.yml` sửa lại dạng include trên nhánh riêng
-  `hoaianh/infra-compose-include`, chờ Khanh review.
+- Root `docker-compose.yml` (Khanh) được đưa lại về dạng include ngay trên
+  `hoaianh/ranking-elo`, kèm `auth-service/compose.yml`; Khanh cần xem khi merge.
 
 ## Tiến độ
 
 - [x] Đợt 0: khung module.
-- [ ] Đợt 1: dữ liệu và bậc rank.
-- [ ] Đợt 2: event.
-- [ ] Đợt 3: thưởng top 3.
-- [ ] Đợt 4: API nội bộ.
-- [ ] Đợt 5: API public.
-- [ ] Đợt 6: FE Bảng xếp hạng.
+- [x] Đợt 1: dữ liệu và bậc rank (V1 bảng, V2 seed "Mùa 1").
+- [x] Đợt 2: event (queue riêng, chống trùng theo `elo_history`).
+- [x] Đợt 3: thưởng top 3 (`rank_reward_credits` + dispatcher thử lại; ví giả ở dev/test).
+- [x] Đợt 4: API nội bộ.
+- [x] Đợt 5: API public (`/api/ranking/leaderboard`, `/api/ranking/me`, `/api/seasons/current`).
+  22 test H2; chạy thật với PostgreSQL/RabbitMQ Docker: event publish qua
+  `poker.events`, event trùng và message hỏng bị bỏ qua, 3 khoản thưởng được gửi.
+- [x] Đợt 6: FE Bảng xếp hạng (`Poker-FE/src/features/ranking`, route `/ranking`,
+  xem `Poker-FE/docs/ranking-rooms-integration.md`). Lint/build qua; kiểm tra trên
+  trình duyệt với ranking-service dev: mùa, vị trí của mình, top 3, dòng "You".
 - [ ] Đợt 7: GĐ2.
 
 ## Phụ thuộc và review trước khi merge

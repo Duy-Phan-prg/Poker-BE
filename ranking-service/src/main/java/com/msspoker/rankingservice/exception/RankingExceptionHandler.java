@@ -1,5 +1,6 @@
 package com.msspoker.rankingservice.exception;
 
+import com.msspoker.rankingservice.constant.RankingHeaders;
 import com.msspoker.rankingservice.dto.response.ErrorResponse;
 import com.msspoker.rankingservice.enums.RankingError;
 
@@ -8,6 +9,7 @@ import jakarta.validation.ConstraintViolationException;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.MethodArgumentNotValidException;
+import org.springframework.web.bind.MissingRequestHeaderException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.method.annotation.HandlerMethodValidationException;
@@ -32,9 +34,20 @@ public class RankingExceptionHandler {
         return business(RankingExceptions.invalidRequest(), request);
     }
 
+    /** The gateway always sets X-User-Id on authenticated routes; a missing header means no identity. */
+    @ExceptionHandler(MissingRequestHeaderException.class)
+    public ResponseEntity<ErrorResponse> missingIdentity(MissingRequestHeaderException ex, HttpServletRequest request) {
+        return business(RankingExceptions.unauthorized(), request);
+    }
+
     @ExceptionHandler(NoResourceFoundException.class)
     public ResponseEntity<ErrorResponse> notFound(NoResourceFoundException ex, HttpServletRequest request) {
         return business(RankingExceptions.notFound(), request);
+    }
+
+    @ExceptionHandler(IllegalArgumentException.class)
+    public ResponseEntity<ErrorResponse> invalid(IllegalArgumentException ex, HttpServletRequest request) {
+        return ResponseEntity.badRequest().body(error(RankingError.RANK_INVALID_REQUEST, ex.getMessage(), request));
     }
 
     @ExceptionHandler(IllegalStateException.class)
@@ -49,6 +62,6 @@ public class RankingExceptionHandler {
     }
 
     private ErrorResponse error(RankingError code, String message, HttpServletRequest request) {
-        return new ErrorResponse(code, message, Instant.now(), request.getHeader("X-Request-Id"));
+        return new ErrorResponse(code, message, Instant.now(), request.getHeader(RankingHeaders.REQUEST_ID));
     }
 }

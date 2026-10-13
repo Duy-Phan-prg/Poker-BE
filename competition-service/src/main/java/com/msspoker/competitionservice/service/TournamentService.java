@@ -1,0 +1,25 @@
+package com.msspoker.competitionservice.service;
+
+import com.msspoker.competitionservice.dto.event.MatchFinishedEvent;
+import com.msspoker.competitionservice.dto.request.CreateTournamentRequest;
+import com.msspoker.competitionservice.dto.response.PageResponse;
+import com.msspoker.competitionservice.dto.response.TournamentResponse;
+import com.msspoker.competitionservice.dto.response.TournamentSummaryResponse;
+
+import java.util.UUID;
+
+public interface TournamentService {
+    TournamentResponse create(UUID adminId, CreateTournamentRequest request);
+
+    PageResponse<TournamentSummaryResponse> list(int page, int size);
+
+    TournamentResponse get(UUID tournamentId);
+
+    TournamentResponse register(UUID tournamentId, UUID accountId);
+
+    TournamentResponse start(UUID tournamentId);
+
+    TournamentResponse cancel(UUID tournamentId);
+
+    void matchFinished(MatchFinishedEvent event);
+}
