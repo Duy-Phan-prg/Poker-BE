@@ -52,8 +52,9 @@ port và WebSocket path vào Redis theo từng account. Reconnect chỉ trả
 `reconnectable=true` khi Redis có `IN_GAME` và Game service vẫn xác nhận đúng bàn đó. Record
 Redis bị stale sẽ được xóa và API trả `reconnectable=false`.
 
-Trạng thái có thể là `NONE`, `WAITING`, `MATCHING`, `CREATING_TABLE`, `READY` hoặc
-`FAILED`. Normal không gọi Ranking/Wallet và không có popup accept.
+Trạng thái hiện tại có thể là `NONE`, `WAITING`, `COUNTDOWN`, `MATCHING`, `CREATING_TABLE`
+hoặc `READY`. `FAILED` chỉ được giữ làm audit, không trả vô thời hạn từ API status.
+Normal không gọi Ranking/Wallet và không có popup accept.
 
 ## Cách hoạt động
 
@@ -65,6 +66,10 @@ Trạng thái có thể là `NONE`, `WAITING`, `MATCHING`, `CREATING_TABLE`, `RE
    `sourceId=proposalId`.
 6. Thành công chuyển `READY`; lỗi 4xx chắc chắn thì `FAILED` và requeue.
 7. Timeout/5xx giữ `CREATING_TABLE`; recovery retry cùng `sourceId` để không tạo hai bàn.
+
+Ownership trạng thái: Redis là nguồn cho `WAITING/COUNTDOWN/RESERVED`; sau khi proposal commit,
+PostgreSQL là nguồn cho `CREATING_TABLE/READY/FAILED`; Game là nguồn xác nhận `IN_GAME`.
+Redis hiện chỉ hỗ trợ deployment standalone vì các Lua operation chạm nhiều key.
 
 ## Biến môi trường chính
 

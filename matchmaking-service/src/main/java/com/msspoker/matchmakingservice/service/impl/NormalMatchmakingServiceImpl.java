@@ -4,8 +4,10 @@ import com.msspoker.matchmakingservice.config.MatchmakingProperties;
 import com.msspoker.matchmakingservice.dto.response.QueueStatusResponse;
 import com.msspoker.matchmakingservice.dto.response.NormalReconnectResponse;
 import com.msspoker.matchmakingservice.dto.response.TableCreatedResponse;
+import com.msspoker.matchmakingservice.entity.MatchProposalPlayerEntity;
 import com.msspoker.matchmakingservice.enums.MatchMode;
 import com.msspoker.matchmakingservice.enums.MatchmakingError;
+import com.msspoker.matchmakingservice.enums.ProposalStatus;
 import com.msspoker.matchmakingservice.exception.MatchmakingApiException;
 import com.msspoker.matchmakingservice.mapper.QueueStatusMapper;
 import com.msspoker.matchmakingservice.model.QueueEntry;
@@ -81,6 +83,14 @@ public class NormalMatchmakingServiceImpl implements NormalMatchmakingService {
 
     @Override
     public void leave(UUID accountId) {
+        if (players.existsActiveProposal(accountId)) {
+            throw new MatchmakingApiException(
+                    MatchmakingError.MM_MATCH_IN_PROGRESS,
+                    HttpStatus.CONFLICT,
+                    "Hệ thống đang tạo bàn cho trận này, không thể rời hàng chờ."
+            );
+        }
+
         QueueEntry entry = queueStore.find(accountId).orElseThrow(() -> new MatchmakingApiException(
                 MatchmakingError.MM_NOT_QUEUED,
                 HttpStatus.NOT_FOUND,
@@ -109,6 +119,27 @@ public class NormalMatchmakingServiceImpl implements NormalMatchmakingService {
 
     @Override
     public QueueStatusResponse status(UUID accountId) {
+        Optional<MatchProposalPlayerEntity> activeProposal =
+                players.findFirstByAccountIdAndIsDeletedFalseAndProposal_StatusAndProposal_IsDeletedFalseOrderByCreatedAtDesc(
+                        accountId,
+                        ProposalStatus.CREATING_TABLE
+                );
+        if (activeProposal.isPresent()) {
+            return statusMapper.proposal(activeProposal.get());
+        }
+
+        Optional<InGameSession> inGame = queueStore.inGame(accountId);
+        if (inGame.isPresent()) {
+            InGameSession session = inGame.get();
+            Optional<TableCreatedResponse> activeTable = game.activeTable(accountId);
+            if (activeTable.isPresent()
+                    && session.tableId().equals(activeTable.get().tableId())
+                    && session.matchId().equals(activeTable.get().matchId())) {
+                return statusMapper.inGame(session);
+            }
+            queueStore.clearInGame(accountId);
+        }
+
         Optional<QueueEntry> current = queueStore.find(accountId);
         if (current.isPresent()) {
             QueueEntry entry = current.get();
@@ -119,9 +150,7 @@ public class NormalMatchmakingServiceImpl implements NormalMatchmakingService {
             return waiting(entry);
         }
 
-        return players.findFirstByAccountIdOrderByCreatedAtDesc(accountId)
-                .map(statusMapper::proposal)
-                .orElseGet(QueueStatusResponse::none);
+        return QueueStatusResponse.none();
     }
 
     @Override

@@ -4,6 +4,7 @@ import com.msspoker.matchmakingservice.config.MatchmakingProperties;
 import com.msspoker.matchmakingservice.enums.MatchMode;
 import com.msspoker.matchmakingservice.model.QueueEntry;
 import com.msspoker.matchmakingservice.model.InGameSession;
+import com.msspoker.matchmakingservice.service.QueueStore;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -94,6 +95,65 @@ class RedisQueueStoreConcurrencyTest {
             assertThat(store.inGame(entries.getFirst().accountId())).contains(session);
             assertThat(store.inGame(entries.getLast().accountId())).contains(session);
             entries.forEach(entry -> store.clearInGame(entry.accountId()));
+        }
+    }
+
+    @Test
+    void requeueAtomicallyRestoresPayloadOrderAndRemovesReservations() {
+        List<QueueEntry> entries = List.of(
+                new QueueEntry(UUID.randomUUID(), MatchMode.NORMAL, Instant.EPOCH.plusSeconds(11)),
+                new QueueEntry(UUID.randomUUID(), MatchMode.NORMAL, Instant.EPOCH.plusSeconds(12))
+        );
+        entries.forEach(entry -> assertThat(store.enqueue(entry)).isTrue());
+        assertThat(store.reserve(MatchMode.NORMAL, entries, UUID.randomUUID())).isTrue();
+
+        store.requeue(entries);
+
+        assertThat(store.oldest(MatchMode.NORMAL, 2)).containsExactlyElementsOf(entries);
+        entries.forEach(entry -> {
+            assertThat(store.find(entry.accountId())).contains(entry);
+            assertThat(store.reservation(entry.accountId())).isEmpty();
+        });
+        entries.forEach(entry -> store.cancel(entry.accountId(), MatchMode.NORMAL));
+    }
+
+    @Test
+    void cancelRacingReserveAlwaysEndsInOneValidState() throws Exception {
+        QueueEntry entry = new QueueEntry(UUID.randomUUID(), MatchMode.NORMAL, Instant.now());
+        assertThat(store.enqueue(entry)).isTrue();
+        CountDownLatch ready = new CountDownLatch(2);
+        CountDownLatch start = new CountDownLatch(1);
+        ExecutorService workers = Executors.newFixedThreadPool(2);
+
+        try {
+            Future<Boolean> reserve = workers.submit(() -> {
+                ready.countDown();
+                start.await();
+                return store.reserve(MatchMode.NORMAL, List.of(entry), UUID.randomUUID());
+            });
+            Future<QueueStore.CancelResult> cancel = workers.submit(() -> {
+                ready.countDown();
+                start.await();
+                return store.cancel(entry.accountId(), MatchMode.NORMAL);
+            });
+            ready.await();
+            start.countDown();
+
+            boolean reserved = reserve.get();
+            QueueStore.CancelResult cancelled = cancel.get();
+            if (reserved) {
+                assertThat(cancelled).isEqualTo(QueueStore.CancelResult.RESERVED);
+                assertThat(store.reservation(entry.accountId())).isPresent();
+                assertThat(store.find(entry.accountId())).contains(entry);
+                store.requeue(List.of(entry));
+                store.cancel(entry.accountId(), MatchMode.NORMAL);
+            } else {
+                assertThat(cancelled).isEqualTo(QueueStore.CancelResult.CANCELLED);
+                assertThat(store.reservation(entry.accountId())).isEmpty();
+                assertThat(store.find(entry.accountId())).isEmpty();
+            }
+        } finally {
+            workers.shutdownNow();
         }
     }
 

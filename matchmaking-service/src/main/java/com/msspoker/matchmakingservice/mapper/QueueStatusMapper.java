@@ -3,6 +3,7 @@ package com.msspoker.matchmakingservice.mapper;
 import com.msspoker.matchmakingservice.dto.response.QueueStatusResponse;
 import com.msspoker.matchmakingservice.entity.MatchProposalPlayerEntity;
 import com.msspoker.matchmakingservice.model.QueueEntry;
+import com.msspoker.matchmakingservice.model.InGameSession;
 import org.mapstruct.Mapper;
 import org.mapstruct.Mapping;
 import org.mapstruct.MappingConstants;
@@ -58,4 +59,17 @@ public interface QueueStatusMapper {
     @Mapping(target = "tableId", source = "proposal.tableId")
     @Mapping(target = "matchId", source = "proposal.matchId")
     QueueStatusResponse proposal(MatchProposalPlayerEntity player);
+
+    @Mapping(target = "status", constant = "READY")
+    @Mapping(target = "mode", source = "mode")
+    @Mapping(target = "joinedAt", ignore = true)
+    @Mapping(target = "position", ignore = true)
+    @Mapping(target = "playerCount", ignore = true)
+    @Mapping(target = "minPlayers", ignore = true)
+    @Mapping(target = "maxPlayers", ignore = true)
+    @Mapping(target = "matchStartDeadline", ignore = true)
+    @Mapping(target = "proposalId", source = "proposalId")
+    @Mapping(target = "tableId", source = "tableId")
+    @Mapping(target = "matchId", source = "matchId")
+    QueueStatusResponse inGame(InGameSession session);
 }

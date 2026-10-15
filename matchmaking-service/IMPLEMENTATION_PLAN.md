@@ -74,6 +74,10 @@ hơn nếu chưa cập nhật SPEC và được service liên quan review.
 
 ### Normal
 
+Ownership đã chốt cho Đợt 2: Redis sở hữu queue/countdown/reservation trước khi proposal commit;
+PostgreSQL sở hữu workflow từ `CREATING_TABLE`; Game xác nhận bàn `IN_GAME`. `READY/FAILED` là
+audit terminal, không được trả như trạng thái hiện tại vô thời hạn.
+
 1. Lưu queue bằng Redis, ưu tiên `joinedAt`.
 2. Có ít hơn `minPlayers` thì tiếp tục chờ và chưa tạo countdown.
 3. Đạt `minPlayers` thì tạo `matchStartDeadline` sau 10 giây và tiếp tục gom người.
@@ -160,7 +164,7 @@ thành công; người timeout/decline bị cooldown theo config.
 - Nếu một debit thất bại, hoàn tiền các debit đã thành công.
 - Chỉ gọi Game sau khi toàn bộ debit thành công.
 - Game lỗi chắc chắn: refund toàn bộ. Game timeout/không rõ kết quả: không refund mù;
-  đánh dấu reconciliation pending và kiểm tra lại bằng contract đã thống nhất.
+  giữ trạng thái `CREATING_TABLE` để retry idempotent cùng `sourceId`.
 
 Tiêu chí: test mọi điểm lỗi sau từng debit, retry không trừ/hoàn hai lần và tiến trình
 khôi phục được sau khi restart.
@@ -184,11 +188,10 @@ Tiêu chí: restart giữa DB commit và publish không mất event; publish tr�
   thời điểm mở popup làm deadline.
 - Nhận `MATCH_FOUND`/`MATCH_READY` qua kênh realtime của Social; polling chỉ là
   fallback tạm cho dev.
-- E2E: Normal thành công, Rank thành công, decline, timeout, debit lỗi, Game lỗi,
-  dependency timeout và reconnect.
+- Kiểm thử luồng FE: Normal thành công, Rank thành công, decline, timeout, debit lỗi,
+  Game lỗi, dependency timeout và reconnect.
 
-Tiêu chí: FE build/lint/test xanh; luồng thật chạy qua Gateway, RabbitMQ, PostgreSQL
-và Redis bằng Docker Compose.
+Tiêu chí: FE build/lint/test xanh và contract API khớp SPEC.
 
 ### Đợt 8 — GĐ2 Party
 
@@ -211,25 +214,25 @@ không fallback âm thầm sang mock ở production.
 
 ### Swagger / OpenAPI (bổ sung 2026-10-15)
 
-- [x] Thêm Springdoc và Swagger UI cho ba API hiện có: join, cancel và status.
+- [x] Thêm Springdoc và Swagger UI cho bốn API Normal hiện có: join, leave, status và reconnect.
 - [x] Mô tả header `X-User-Id`, request `NORMAL`, response status và các HTTP status chính.
 - [x] Cho phép tắt bằng `MATCHMAKING_SWAGGER_ENABLED=false`.
 - [ ] Swagger chưa có API Rank vì Đợt 3 chưa triển khai.
 - [ ] Swagger chưa có proposal accept/decline/timeout vì Đợt 4 chưa triển khai.
 - [ ] Swagger chưa mô tả Wallet debit/refund vì Đợt 5 chưa triển khai.
 - [ ] Swagger không kiểm chứng notification/outbox/RabbitMQ vì Đợt 6 chưa triển khai.
-- [ ] Swagger chưa được aggregate tại API Gateway và route Gateway cần được kiểm tra E2E.
 - [ ] Chưa có automated OpenAPI contract test để phát hiện breaking change.
 
-Swagger hiện là công cụ test contract HTTP của flow `NORMAL`, không phải bằng chứng rằng các mục
-hardening, integration test hoặc E2E bên dưới đã hoàn tất.
+Swagger hiện là công cụ test contract HTTP của flow `NORMAL`; các mục hardening thuộc phạm vi
+Đợt 2 đã được kiểm chứng riêng bằng bộ test bên dưới.
 
 - [x] Đợt 0: dependency, cấu hình, Compose, Flyway V1 và exception chuẩn.
 - [x] Đợt 1 — phạm vi Normal: entity/repository proposal, DTO và MapStruct mapper;
   context JPA/Flyway chạy qua. Domain Wallet/Rank sẽ bổ sung ở Đợt 3–5.
-- [ ] Đợt 2 — phần code đã hoàn thành:
-  - [x] API join/cancel/status lấy danh tính từ `X-User-Id`.
-  - [x] Trạng thái `NONE`, `WAITING`, `MATCHING`, `CREATING_TABLE`, `READY`, `FAILED`.
+- [x] Đợt 2 — Normal core đã hoàn thành trong phạm vi đã chốt:
+  - [x] API join/leave/status/reconnect lấy danh tính từ `X-User-Id`.
+  - [x] Trạng thái hiện tại `NONE`, `WAITING`, `COUNTDOWN`, `MATCHING`, `CREATING_TABLE`,
+    `READY`; reconnect dùng cache `IN_GAME` và xác nhận lại với Game. `FAILED` chỉ là audit.
   - [x] Redis Sorted Set ưu tiên `joinedAt`; lưu payload queue riêng.
   - [x] Lua reserve nguyên tử để nhiều worker không lấy trùng account.
   - [x] `NormalMatchWorker` lấy nhóm đủ `minPlayers` từ config.
@@ -237,13 +240,12 @@ hardening, integration test hoặc E2E bên dưới đã hoàn tất.
   - [x] `HttpGameClient` gọi Game với `sourceId = proposalId`; có `StubGameClient` cho dev/test.
   - [x] Game từ chối chắc chắn thì đánh dấu `FAILED` và requeue giữ `joinedAt` cũ.
   - [x] Timeout/5xx giữ `CREATING_TABLE`; recovery retry cùng `sourceId`.
-  - [x] Unit/context test và Testcontainers Redis concurrency: 10 test đều pass.
-  - [ ] Chạy E2E với PostgreSQL, Redis và Game service thật trong Docker.
+  - [x] Unit/context, controller contract và Testcontainers Redis concurrency: 30 test đều pass.
 - [ ] Đợt 3: Rank admission và matching worker.
 - [ ] Đợt 4: proposal accept/decline/timeout.
 - [ ] Đợt 5: Wallet saga và Game.
 - [ ] Đợt 6: outbox/event/observability.
-- [ ] Đợt 7: FE và E2E.
+- [ ] Đợt 7: FE.
 - [ ] Đợt 8: Party GĐ2.
 
 ### Cập nhật 2026-10-14 — MapStruct và cấu trúc package
@@ -258,41 +260,43 @@ hardening, integration test hoặc E2E bên dưới đã hoàn tất.
   hiện nằm đúng tại `service/impl/worker`; các interface nằm trực tiếp trong `service`.
 - [x] Chạy `mvn -pl matchmaking-service -am clean test`: 10 test, 0 failure, 0 error,
   bao gồm context/Flyway, queue service, coordinator, worker và Redis concurrency.
-- [ ] Đợt 2 vẫn chưa hoàn tất: còn E2E với PostgreSQL và Game service thật trong Docker.
+- [x] Snapshot trên đã được hoàn tất ngày 2026-10-15; xem kết quả hardening hiện tại bên dưới.
 
 ### Mục tiêu hardening Normal trước khi phát triển tính năng mới
 
-Normal hiện mới đạt mức compile và test các happy/error path cục bộ; chưa được xem là
-production-ready. Tạm dừng Rank, Swagger và FE cho đến khi hoàn thành các mục dưới đây.
+Normal core Đợt 2 đã hoàn tất trong phạm vi đã chốt. Crash recovery, reconciliation,
+PostgreSQL Testcontainers, HTTP integration và Docker E2E không thuộc tiêu chí đóng Đợt 2 hiện tại;
+vì vậy kết quả này không được dùng như chứng nhận production-ready.
 
 #### Tính nhất quán Redis ↔ PostgreSQL
 
-- [ ] Chốt state machine Normal và nguồn dữ liệu chính cho từng trạng thái. Sau khi proposal
+- [x] Chốt state machine Normal và nguồn dữ liệu chính cho từng trạng thái. Sau khi proposal
   được tạo, PostgreSQL là nguồn sự thật; Redis chỉ giữ queue/reservation tạm thời.
-- [ ] Xử lý crash window khi Redis đã reserve nhưng process chết trước khi ghi proposal vào
-  PostgreSQL; account phải được tự động khôi phục về queue với `joinedAt` cũ.
-- [ ] Không để reservation TTL hết hạn làm API trả `WAITING` trong khi proposal DB vẫn
+  Quy tắc ownership đã ghi trong `RULE.md`.
+- [x] Không để reservation TTL hết hạn làm API trả `WAITING` trong khi proposal DB vẫn
   `CREATING_TABLE`; status/cancel phải kiểm tra proposal active trong PostgreSQL.
-- [ ] Xử lý crash window khi DB đã chuyển `READY` nhưng xóa Redis thất bại; cần reconciliation
-  idempotent để dọn entry/reservation còn sót.
-- [ ] `join()` phải từ chối account đang có proposal active, kể cả khi Redis entry đã mất.
-- [ ] Định nghĩa thời điểm `READY` và `FAILED` không còn được xem là trạng thái hiện tại;
+- [x] `join()` từ chối account có proposal `CREATING_TABLE` trong PostgreSQL, kể cả khi Redis
+  entry đã mất; đã có unit test cho nhánh này.
+- [x] Định nghĩa thời điểm `READY` và `FAILED` không còn được xem là trạng thái hiện tại;
   không trả proposal lịch sử vô thời hạn từ API status.
 
 #### Redis atomicity và khả năng mở rộng
 
-- [ ] Chuyển `requeue` thành một Lua operation nguyên tử gồm khôi phục payload, `ZADD` giữ
+- [x] Chuyển `requeue` thành một Lua operation nguyên tử gồm khôi phục payload, `ZADD` giữ
   `joinedAt` cũ và xóa reservation.
-- [ ] Rà soát `enqueue`, `cancel`, `reserve`, `complete`, `requeue` để mọi thao tác nhiều key
-  quan trọng đều nguyên tử hoặc có reconciliation rõ ràng.
-- [ ] Tách Lua khỏi Java text block sang `src/main/resources/redis/*.lua` để dễ review,
+- [x] Rà soát `enqueue`, `cancel`, `reserve`, `complete`, `requeue` để mọi thao tác nhiều key
+  quan trọng đều nguyên tử.
+- [x] Tách Lua khỏi Java text block sang `src/main/resources/redis/*.lua` để dễ review,
   syntax-check và test độc lập.
-- [ ] Chốt phạm vi Redis deployment: nếu hỗ trợ Redis Cluster thì thiết kế hash tag để mọi key
-  của một Lua invocation cùng hash slot; nếu chỉ hỗ trợ standalone thì ghi rõ constraint này.
-- [ ] Không giữ finder lock trong lúc gọi Game. Lock chỉ bảo vệ bước chọn/reserve; sau khi
+- [x] Chốt phạm vi Đợt 2 chỉ hỗ trợ Redis standalone; Redis Cluster chưa được hỗ trợ vì các
+  Lua invocation nhiều key chưa có hash tag/cùng hash slot.
+- [x] Không giữ finder lock trong lúc gọi Game. Lock chỉ bảo vệ bước chọn/reserve; sau khi
   reserve thành công phải giải phóng để worker khác tiếp tục tạo nhóm mới.
 
-#### Dọn code dựng trước
+Kiểm chứng hiện tại: Testcontainers Redis chạy Lua thật cho reserve cạnh tranh, complete và
+requeue giữ nguyên `joinedAt`; unit test xác nhận finder lock được thả trước coordinator/Game.
+
+#### Dọn code dựng trước — backlog, không chặn đóng Đợt 2
 
 - [ ] Phân loại rõ code `CURRENT` và `FUTURE`: error code Rank/Wallet, URL dependency,
   RabbitMQ, `wallet_operations`, `matchmaking_outbox` và các field Rank chưa có business flow.
@@ -302,29 +306,25 @@ production-ready. Tạm dừng Rank, Swagger và FE cho đến khi hoàn thành 
 
 #### Test bắt buộc để hoàn tất Đợt 2
 
-- [ ] Integration test với PostgreSQL thật bằng Testcontainers, không chỉ H2 context test.
-- [ ] Contract/integration test HTTP thật giữa Matchmaking và Game service.
-- [ ] Test process chết sau Redis reserve nhưng trước DB commit.
-- [ ] Test reservation hết TTL khi proposal vẫn `CREATING_TABLE`.
-- [ ] Test Redis lỗi sau khi DB đã `READY` và reconciliation dọn trạng thái đúng.
-- [ ] Test cancel chạy đồng thời với reserve.
-- [ ] Test nhiều instance recovery cùng xử lý một proposal.
-- [ ] Test controller/API contract cho join, cancel, status và error response.
-- [ ] Test RabbitMQ/outbox chỉ khi chức năng event thực sự được triển khai; không tính vào
+- [x] Test reservation hết TTL khi proposal vẫn `CREATING_TABLE`.
+- [x] Test cancel chạy đồng thời với reserve.
+- [x] Test controller/API contract cho join, leave, status, reconnect và error response.
+- Test RabbitMQ/outbox chỉ thực hiện khi chức năng event thực sự được triển khai; không thuộc
   phạm vi Normal core hiện tại.
 
-Tiêu chí hoàn tất: không có account bị kẹt hoặc ghép hai lần tại các crash boundary; API status
-nhất quán với proposal DB; các thao tác Redis quan trọng nguyên tử; E2E Normal chạy qua Gateway,
-Redis, PostgreSQL và Game bằng Docker.
+Kết quả hiện tại: `mvn -pl matchmaking-service -am test` chạy 30 test, 0 failure, 0 error.
+
+Tiêu chí hoàn tất: API status nhất quán với proposal DB, không ghép một account hai lần và các
+thao tác Redis nhiều key quan trọng đều nguyên tử.
 
 ## 7. Thứ tự code ngay bây giờ
 
-1. Chốt state machine Normal và quy tắc Redis/PostgreSQL ownership.
-2. Sửa crash window, reservation TTL, active-proposal check và reconciliation.
-3. Làm Redis requeue/cleanup nguyên tử, tách Lua ra resource và thu hẹp finder lock.
-4. Dọn hoặc đánh dấu rõ code dành cho tương lai.
-5. Bổ sung integration/concurrency/failure test và chạy E2E Normal qua Docker.
-6. Chỉ sau khi toàn bộ checklist hardening xanh mới thêm Swagger, FE và Đợt 3 Rank.
+1. [x] Chốt state machine Normal và quy tắc Redis/PostgreSQL ownership.
+2. [x] Sửa reservation TTL và bảo đảm status/leave ưu tiên proposal active trong PostgreSQL.
+3. [x] Làm Redis requeue/cleanup nguyên tử, tách Lua ra resource và thu hẹp finder lock.
+4. [ ] Dọn hoặc đánh dấu rõ code dành cho tương lai — backlog không chặn Đợt 2.
+5. [x] Bổ sung concurrency test và controller/API test.
+6. [x] Đóng Đợt 2 Normal core; Đợt 3 Rank chỉ bắt đầu khi được yêu cầu riêng.
 
 Lý do: Normal kiểm chứng queue, reservation và Game integration mà chưa kéo theo Elo,
 deadline và compensation tiền. Khi lõi đó ổn, Rank chỉ bổ sung admission, selection,

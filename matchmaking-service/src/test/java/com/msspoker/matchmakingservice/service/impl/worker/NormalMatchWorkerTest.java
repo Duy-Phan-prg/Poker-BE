@@ -6,6 +6,7 @@ import com.msspoker.matchmakingservice.model.QueueEntry;
 import com.msspoker.matchmakingservice.service.NormalMatchCoordinator;
 import com.msspoker.matchmakingservice.service.QueueStore;
 import org.junit.jupiter.api.Test;
+import org.mockito.InOrder;
 
 import java.time.Clock;
 import java.time.Instant;
@@ -81,6 +82,9 @@ class NormalMatchWorkerTest {
 
         verify(queueStore).cancelCountdown(MatchMode.NORMAL);
         verify(coordinator).start(any(UUID.class), eq(entries));
+        InOrder order = inOrder(queueStore, coordinator);
+        order.verify(queueStore).releaseFinderLock(MatchMode.NORMAL, "lock");
+        order.verify(coordinator).start(any(UUID.class), eq(entries));
     }
 
     @Test
@@ -95,6 +99,9 @@ class NormalMatchWorkerTest {
 
         verify(queueStore).cancelCountdown(MatchMode.NORMAL);
         verify(coordinator).start(any(UUID.class), eq(entries));
+        InOrder order = inOrder(queueStore, coordinator);
+        order.verify(queueStore).releaseFinderLock(MatchMode.NORMAL, "lock");
+        order.verify(coordinator).start(any(UUID.class), eq(entries));
     }
 
     private void lock() {

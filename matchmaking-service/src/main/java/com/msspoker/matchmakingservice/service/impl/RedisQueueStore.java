@@ -8,6 +8,8 @@ import com.msspoker.matchmakingservice.model.InGameSession;
 import com.msspoker.matchmakingservice.service.QueueStore;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.DefaultRedisScript;
+import org.springframework.core.io.ClassPathResource;
+import org.springframework.scripting.support.ResourceScriptSource;
 import org.springframework.stereotype.Repository;
 
 import java.time.Duration;
@@ -20,57 +22,12 @@ import java.util.UUID;
 
 @Repository
 public class RedisQueueStore implements QueueStore {
-    private static final DefaultRedisScript<Long> ENQUEUE = new DefaultRedisScript<>("""
-            if redis.call('EXISTS', KEYS[2]) == 1 then return 0 end
-            local stored = redis.call('SET', KEYS[2], ARGV[3], 'EX', ARGV[4], 'NX')
-            if not stored then return 0 end
-            local added = redis.call('ZADD', KEYS[1], 'NX', ARGV[2], ARGV[1])
-            if added == 0 then redis.call('DEL', KEYS[2]); return 0 end
-            return 1
-            """, Long.class);
-
-    private static final DefaultRedisScript<Long> CANCEL = new DefaultRedisScript<>("""
-            if redis.call('EXISTS', KEYS[3]) == 1 then return -1 end
-            local removed = redis.call('ZREM', KEYS[1], ARGV[1])
-            redis.call('DEL', KEYS[2])
-            return removed
-            """, Long.class);
-
-    private static final DefaultRedisScript<Long> RESERVE = new DefaultRedisScript<>("""
-            local count = tonumber(ARGV[1])
-            for i = 1, count do
-                local account = ARGV[i + 3]
-                local entryKey = KEYS[i + 1]
-                local reservationKey = KEYS[count + i + 1]
-                if not redis.call('ZSCORE', KEYS[1], account) then return 0 end
-                if redis.call('EXISTS', entryKey) == 0 then return 0 end
-                if redis.call('EXISTS', reservationKey) == 1 then return 0 end
-            end
-            for i = 1, count do
-                local account = ARGV[i + 3]
-                local reservationKey = KEYS[count + i + 1]
-                redis.call('ZREM', KEYS[1], account)
-                redis.call('PSETEX', reservationKey, ARGV[3], ARGV[2])
-            end
-            return 1
-            """, Long.class);
-
-    private static final DefaultRedisScript<Long> RELEASE_LOCK = new DefaultRedisScript<>("""
-            if redis.call('GET', KEYS[1]) == ARGV[1] then
-                return redis.call('DEL', KEYS[1])
-            end
-            return 0
-            """, Long.class);
-
-    private static final DefaultRedisScript<Long> COMPLETE = new DefaultRedisScript<>("""
-            local count = tonumber(ARGV[1])
-            for i = 1, count do
-                local offset = (i - 1) * 3
-                redis.call('DEL', KEYS[offset + 1], KEYS[offset + 2])
-                redis.call('PSETEX', KEYS[offset + 3], ARGV[2], ARGV[3])
-            end
-            return count
-            """, Long.class);
+    private static final DefaultRedisScript<Long> ENQUEUE = script("redis/enqueue.lua");
+    private static final DefaultRedisScript<Long> CANCEL = script("redis/cancel.lua");
+    private static final DefaultRedisScript<Long> RESERVE = script("redis/reserve.lua");
+    private static final DefaultRedisScript<Long> COMPLETE = script("redis/complete.lua");
+    private static final DefaultRedisScript<Long> REQUEUE = script("redis/requeue.lua");
+    private static final DefaultRedisScript<Long> RELEASE_LOCK = script("redis/release-lock.lua");
 
     private final StringRedisTemplate redis;
     private final MatchmakingProperties properties;
@@ -91,7 +48,7 @@ public class RedisQueueStore implements QueueStore {
                 entry.accountId().toString(),
                 Long.toString(entry.joinedAt().toEpochMilli()),
                 write(entry),
-                Long.toString(properties.getQueue().getEntryTtl().toSeconds())
+                Long.toString(properties.getQueue().getEntryTtl().toMillis())
         );
         return Long.valueOf(1L).equals(result);
     }
@@ -211,13 +168,11 @@ public class RedisQueueStore implements QueueStore {
             keys.add(reservationKey(entry.accountId()));
             keys.add(inGameKey(entry.accountId()));
         }
-        redis.execute(
-                COMPLETE,
-                keys,
-                Integer.toString(entries.size()),
-                Long.toString(properties.getGame().getSessionTtl().toMillis()),
-                write(session)
-        );
+        List<String> arguments = new ArrayList<>(3);
+        arguments.add(Integer.toString(entries.size()));
+        arguments.add(Long.toString(properties.getGame().getSessionTtl().toMillis()));
+        arguments.add(write(session));
+        redis.execute(COMPLETE, keys, arguments.toArray());
     }
 
     @Override
@@ -251,10 +206,26 @@ public class RedisQueueStore implements QueueStore {
 
     @Override
     public void requeue(List<QueueEntry> entries) {
-        for (QueueEntry entry : entries) {
-            redis.opsForZSet().add(queueKey(entry.mode()), entry.accountId().toString(), entry.joinedAt().toEpochMilli());
-            redis.delete(reservationKey(entry.accountId()));
+        if (entries.isEmpty()) return;
+        MatchMode mode = entries.getFirst().mode();
+        if (entries.stream().anyMatch(entry -> entry.mode() != mode)) {
+            throw new IllegalArgumentException("Không thể requeue nhiều mode trong một operation");
         }
+        List<String> keys = new ArrayList<>(1 + entries.size() * 2);
+        keys.add(queueKey(mode));
+        entries.forEach(entry -> {
+            keys.add(entryKey(entry.accountId()));
+            keys.add(reservationKey(entry.accountId()));
+        });
+        List<String> arguments = new ArrayList<>(2 + entries.size() * 3);
+        arguments.add(Integer.toString(entries.size()));
+        arguments.add(Long.toString(properties.getQueue().getEntryTtl().toMillis()));
+        entries.forEach(entry -> {
+            arguments.add(entry.accountId().toString());
+            arguments.add(Long.toString(entry.joinedAt().toEpochMilli()));
+            arguments.add(write(entry));
+        });
+        redis.execute(REQUEUE, keys, arguments.toArray());
     }
 
     @Override
@@ -293,4 +264,11 @@ public class RedisQueueStore implements QueueStore {
     private String lockKey(MatchMode mode) { return MatchmakingConstants.REDIS_PREFIX + "lock:finder:" + mode.name(); }
     private String countdownKey(MatchMode mode) { return MatchmakingConstants.REDIS_PREFIX + "countdown:" + mode.name(); }
     private String inGameKey(UUID accountId) { return MatchmakingConstants.REDIS_PREFIX + "in-game:" + accountId; }
+
+    private static DefaultRedisScript<Long> script(String path) {
+        DefaultRedisScript<Long> script = new DefaultRedisScript<>();
+        script.setResultType(Long.class);
+        script.setScriptSource(new ResourceScriptSource(new ClassPathResource(path)));
+        return script;
+    }
 }

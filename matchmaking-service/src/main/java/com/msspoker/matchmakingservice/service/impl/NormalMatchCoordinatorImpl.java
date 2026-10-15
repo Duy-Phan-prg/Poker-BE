@@ -63,15 +63,7 @@ public class NormalMatchCoordinatorImpl implements NormalMatchCoordinator {
         );
         try {
             TableCreatedResponse response = game.createTable(request);
-            queueStore.complete(entries, new InGameSession(
-                    MatchMode.NORMAL,
-                    proposalId,
-                    response.tableId(),
-                    response.matchId(),
-                    properties.getGame().getPublicHost(),
-                    properties.getGame().getPublicPort(),
-                    properties.getGame().getWebsocketPath()
-            ));
+            queueStore.complete(entries, session(proposalId, response.tableId(), response.matchId()));
             persistence.ready(proposalId, response.tableId(), response.matchId());
             log.info("Normal match ready proposalId={} tableId={} matchId={}",
                     proposalId, response.tableId(), response.matchId());
@@ -84,5 +76,17 @@ public class NormalMatchCoordinatorImpl implements NormalMatchCoordinator {
             // Recovery retries with the same sourceId, which is idempotent in game-service.
             log.warn("Normal proposal awaits Game reconciliation proposalId={}", proposalId, exception);
         }
+    }
+
+    private InGameSession session(UUID proposalId, UUID tableId, UUID matchId) {
+        return new InGameSession(
+                MatchMode.NORMAL,
+                proposalId,
+                tableId,
+                matchId,
+                properties.getGame().getPublicHost(),
+                properties.getGame().getPublicPort(),
+                properties.getGame().getWebsocketPath()
+        );
     }
 }

@@ -45,6 +45,8 @@ public class NormalMatchWorker {
         Optional<String> lock = queueStore.acquireFinderLock(MatchMode.NORMAL);
         if (lock.isEmpty()) return;
 
+        List<QueueEntry> reservedEntries = null;
+        UUID proposalId = null;
         try {
             int minPlayers = properties.getNormal().getMinPlayers();
             int maxPlayers = properties.getNormal().getMaxPlayers();
@@ -68,14 +70,22 @@ public class NormalMatchWorker {
                 if (now.isBefore(deadline.get())) return;
             }
 
-            UUID proposalId = MatchmakingIds.newProposalId();
+            proposalId = MatchmakingIds.newProposalId();
             if (!queueStore.reserve(MatchMode.NORMAL, entries, proposalId)) return;
+            reservedEntries = entries;
             queueStore.cancelCountdown(MatchMode.NORMAL);
-            coordinator.start(proposalId, entries);
         } catch (RuntimeException exception) {
             log.error("Normal match finder failed", exception);
         } finally {
             queueStore.releaseFinderLock(MatchMode.NORMAL, lock.get());
+        }
+
+        if (proposalId != null && reservedEntries != null) {
+            try {
+                coordinator.start(proposalId, reservedEntries);
+            } catch (RuntimeException exception) {
+                log.error("Normal match creation failed proposalId={}", proposalId, exception);
+            }
         }
     }
 }

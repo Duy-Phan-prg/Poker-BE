@@ -1,6 +1,7 @@
 package com.msspoker.matchmakingservice.repository;
 
 import com.msspoker.matchmakingservice.entity.MatchProposalPlayerEntity;
+import com.msspoker.matchmakingservice.enums.ProposalStatus;
 import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
@@ -11,7 +12,10 @@ import java.util.UUID;
 
 public interface MatchProposalPlayerRepository extends JpaRepository<MatchProposalPlayerEntity, UUID> {
     @EntityGraph(attributePaths = "proposal")
-    Optional<MatchProposalPlayerEntity> findFirstByAccountIdOrderByCreatedAtDesc(UUID accountId);
+    Optional<MatchProposalPlayerEntity> findFirstByAccountIdAndIsDeletedFalseAndProposal_StatusAndProposal_IsDeletedFalseOrderByCreatedAtDesc(
+            UUID accountId,
+            ProposalStatus status
+    );
 
     @Query("""
             select (count(player) > 0)

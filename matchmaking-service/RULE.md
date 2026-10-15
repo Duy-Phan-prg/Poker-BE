@@ -310,6 +310,13 @@ mm:v1:cooldown:{accountId}
 - Mọi key tạm phải có TTL hợp lý; lock phải có lease time.
 - Redis mất dữ liệu không được làm mất thông tin thu/hoàn phí đã ghi PostgreSQL.
 - Không dùng `KEYS`; dùng key trực tiếp hoặc `SCAN` khi thật sự cần.
+- Đợt 2 chỉ hỗ trợ **Redis standalone**. Các Lua operation chạm nhiều account/key nên
+  chưa tương thích Redis Cluster; không được bật Cluster cho tới khi key được thiết kế
+  lại với hash tag và có test CROSSSLOT.
+- Lua script phải nằm trong `src/main/resources/redis/*.lua`, không nhúng Java text block.
+- `enqueue`, `cancel`, `reserve`, `complete`, `requeue` và compare-delete lock phải nguyên tử.
+- Finder lock chỉ bảo vệ chọn nhóm và reserve. Phải thả lock ngay sau reserve, trước mọi
+  thao tác PostgreSQL hoặc HTTP tới Game.
 
 ## 5. API public dự kiến
 
@@ -423,6 +430,25 @@ Event envelope phải có `eventId`, `eventType`, `occurredAt`, `source` và `pa
 Publisher retry event chưa gửi; chỉ đánh dấu `PUBLISHED` sau khi broker xác nhận.
 
 ## 8. State machine
+
+### Normal CURRENT — ownership đã chốt
+
+| Trạng thái | Nguồn sự thật | Ý nghĩa |
+|---|---|---|
+| `NONE` | Kết quả đối chiếu Redis + PostgreSQL | Không chờ, không có proposal hiện hành |
+| `WAITING` / `COUNTDOWN` | Redis | Entry còn trong sorted set; countdown là dữ liệu tạm |
+| `RESERVED` / `MATCHING` | Redis | Nhóm đã được reserve nguyên tử, proposal có thể chưa commit |
+| `CREATING_TABLE` | PostgreSQL | Proposal đã commit; từ đây PostgreSQL thắng Redis |
+| `READY` | PostgreSQL | Audit tạo bàn thành công; Game xác nhận bàn còn active |
+| `FAILED` | PostgreSQL | Audit terminal; không phải trạng thái hiện tại trả vô thời hạn |
+| `IN_GAME` | Game; Redis chỉ cache reconnect | Người chơi đang ở bàn active |
+
+Ranh giới ownership là commit `match_proposals`: trước commit, Redis sở hữu queue/reservation;
+sau commit, PostgreSQL sở hữu workflow proposal. Redis entry/reservation còn sót sau ranh giới
+chỉ là dữ liệu tạm còn sót, không được ghi đè trạng thái PostgreSQL.
+
+`READY` và `FAILED` là lịch sử/audit. `READY` chỉ được xem là hiện tại khi Game còn xác nhận
+bàn active; `FAILED` phải dẫn tới `WAITING` hoặc `NONE`, không được trả như status hiện tại mãi.
 
 ### Queue entry
 

@@ -3,6 +3,8 @@ package com.msspoker.matchmakingservice.service.impl;
 import com.msspoker.matchmakingservice.enums.MatchMode;
 import com.msspoker.matchmakingservice.config.MatchmakingProperties;
 import com.msspoker.matchmakingservice.dto.response.TableCreatedResponse;
+import com.msspoker.matchmakingservice.entity.MatchProposalEntity;
+import com.msspoker.matchmakingservice.entity.MatchProposalPlayerEntity;
 import com.msspoker.matchmakingservice.enums.MatchmakingError;
 import com.msspoker.matchmakingservice.exception.MatchmakingApiException;
 import com.msspoker.matchmakingservice.mapper.QueueStatusMapper;
@@ -179,5 +181,73 @@ class NormalMatchmakingServiceImplTest {
         assertThatThrownBy(() -> service.leave(accountId))
                 .isInstanceOfSatisfying(MatchmakingApiException.class, exception ->
                         assertThat(exception.getCode()).isEqualTo(MatchmakingError.MM_MATCH_IN_PROGRESS));
+    }
+
+    @Test
+    void leaveChecksActiveProposalBeforeRedis() {
+        UUID accountId = UUID.randomUUID();
+        when(players.existsActiveProposal(accountId)).thenReturn(true);
+
+        assertThatThrownBy(() -> service.leave(accountId))
+                .isInstanceOfSatisfying(MatchmakingApiException.class, exception ->
+                        assertThat(exception.getCode()).isEqualTo(MatchmakingError.MM_MATCH_IN_PROGRESS));
+
+        verify(queueStore, never()).find(accountId);
+        verify(queueStore, never()).cancel(any(), any());
+    }
+
+    @Test
+    void statusUsesCreatingProposalWhenReservationTtlHasExpired() {
+        UUID accountId = UUID.randomUUID();
+        UUID proposalId = UUID.randomUUID();
+        MatchProposalEntity proposal = MatchProposalEntity.normal(proposalId, NOW);
+        MatchProposalPlayerEntity player = MatchProposalPlayerEntity.reserved(accountId, NOW.minusSeconds(30), NOW);
+        proposal.addPlayer(player);
+        when(players.findFirstByAccountIdAndIsDeletedFalseAndProposal_StatusAndProposal_IsDeletedFalseOrderByCreatedAtDesc(
+                accountId,
+                com.msspoker.matchmakingservice.enums.ProposalStatus.CREATING_TABLE
+        )).thenReturn(Optional.of(player));
+
+        var response = service.status(accountId);
+
+        assertThat(response.status()).isEqualTo("CREATING_TABLE");
+        assertThat(response.proposalId()).isEqualTo(proposalId);
+        verify(queueStore, never()).find(accountId);
+        verify(queueStore, never()).reservation(accountId);
+    }
+
+    @Test
+    void statusDoesNotReturnHistoricalReadyOrFailedProposal() {
+        UUID accountId = UUID.randomUUID();
+        when(players.findFirstByAccountIdAndIsDeletedFalseAndProposal_StatusAndProposal_IsDeletedFalseOrderByCreatedAtDesc(
+                accountId,
+                com.msspoker.matchmakingservice.enums.ProposalStatus.CREATING_TABLE
+        )).thenReturn(Optional.empty());
+        when(queueStore.inGame(accountId)).thenReturn(Optional.empty());
+        when(queueStore.find(accountId)).thenReturn(Optional.empty());
+
+        var response = service.status(accountId);
+
+        assertThat(response.status()).isEqualTo("NONE");
+        assertThat(response.proposalId()).isNull();
+    }
+
+    @Test
+    void statusReturnsReadyOnlyForGameConfirmedInGameSession() {
+        UUID accountId = UUID.randomUUID();
+        UUID tableId = UUID.randomUUID();
+        UUID matchId = UUID.randomUUID();
+        InGameSession session = new InGameSession(
+                MatchMode.NORMAL, UUID.randomUUID(), tableId, matchId, "localhost", 8082, "/ws/game"
+        );
+        when(queueStore.inGame(accountId)).thenReturn(Optional.of(session));
+        when(game.activeTable(accountId)).thenReturn(Optional.of(new TableCreatedResponse(tableId, matchId)));
+
+        var response = service.status(accountId);
+
+        assertThat(response.status()).isEqualTo("READY");
+        assertThat(response.tableId()).isEqualTo(tableId);
+        assertThat(response.matchId()).isEqualTo(matchId);
+        verify(queueStore, never()).find(accountId);
     }
 }
