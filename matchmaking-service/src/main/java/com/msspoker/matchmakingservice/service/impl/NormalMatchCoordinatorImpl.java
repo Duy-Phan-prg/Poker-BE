@@ -5,6 +5,9 @@ import com.msspoker.matchmakingservice.dto.response.TableCreatedResponse;
 import com.msspoker.matchmakingservice.exception.GameCallRejectedException;
 import com.msspoker.matchmakingservice.exception.GameCallUnknownException;
 import com.msspoker.matchmakingservice.model.QueueEntry;
+import com.msspoker.matchmakingservice.model.InGameSession;
+import com.msspoker.matchmakingservice.enums.MatchMode;
+import com.msspoker.matchmakingservice.config.MatchmakingProperties;
 import com.msspoker.matchmakingservice.service.GameClient;
 import com.msspoker.matchmakingservice.service.NormalMatchCoordinator;
 import com.msspoker.matchmakingservice.service.ProposalPersistenceService;
@@ -23,15 +26,18 @@ public class NormalMatchCoordinatorImpl implements NormalMatchCoordinator {
     private final ProposalPersistenceService persistence;
     private final GameClient game;
     private final QueueStore queueStore;
+    private final MatchmakingProperties properties;
 
     public NormalMatchCoordinatorImpl(
             ProposalPersistenceService persistence,
             GameClient game,
-            QueueStore queueStore
+            QueueStore queueStore,
+            MatchmakingProperties properties
     ) {
         this.persistence = persistence;
         this.game = game;
         this.queueStore = queueStore;
+        this.properties = properties;
     }
 
     @Override
@@ -57,8 +63,16 @@ public class NormalMatchCoordinatorImpl implements NormalMatchCoordinator {
         );
         try {
             TableCreatedResponse response = game.createTable(request);
+            queueStore.complete(entries, new InGameSession(
+                    MatchMode.NORMAL,
+                    proposalId,
+                    response.tableId(),
+                    response.matchId(),
+                    properties.getGame().getPublicHost(),
+                    properties.getGame().getPublicPort(),
+                    properties.getGame().getWebsocketPath()
+            ));
             persistence.ready(proposalId, response.tableId(), response.matchId());
-            queueStore.complete(entries);
             log.info("Normal match ready proposalId={} tableId={} matchId={}",
                     proposalId, response.tableId(), response.matchId());
         } catch (GameCallRejectedException exception) {

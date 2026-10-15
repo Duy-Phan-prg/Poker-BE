@@ -16,14 +16,18 @@ import org.springframework.web.client.RestClientResponseException;
 
 import java.net.http.HttpClient;
 import java.time.Duration;
+import java.util.Optional;
+import java.util.UUID;
 
 @Component
 @ConditionalOnProperty(name = "matchmaking.game.stub-enabled", havingValue = "false", matchIfMissing = true)
 public class HttpGameClient implements GameClient {
     private final RestClient game;
+    private final String serviceKey;
 
     public HttpGameClient(
             @Value("${matchmaking.game-url:http://localhost:8082}") String gameUrl,
+            @Value("${matchmaking.game.service-key:}") String serviceKey,
             MatchmakingProperties properties
     ) {
         Duration timeout = properties.getGame().getTimeout();
@@ -32,6 +36,7 @@ public class HttpGameClient implements GameClient {
         );
         factory.setReadTimeout(timeout);
         this.game = RestClient.builder().baseUrl(gameUrl).requestFactory(factory).build();
+        this.serviceKey = serviceKey;
     }
 
     @Override
@@ -39,6 +44,7 @@ public class HttpGameClient implements GameClient {
         try {
             TableCreatedResponse response = game.post()
                     .uri("/internal/tables")
+                    .header("X-Game-Service-Key", serviceKey)
                     .contentType(MediaType.APPLICATION_JSON)
                     .body(request)
                     .retrieve()
@@ -54,6 +60,22 @@ public class HttpGameClient implements GameClient {
             throw new GameCallUnknownException("Chưa xác định Game đã tạo bàn hay chưa", exception);
         } catch (GameCallUnknownException exception) {
             throw exception;
+        } catch (RuntimeException exception) {
+            throw new GameCallUnknownException("Không kết nối được game-service", exception);
+        }
+    }
+
+    @Override
+    public Optional<TableCreatedResponse> activeTable(UUID accountId) {
+        try {
+            TableCreatedResponse response = game.get()
+                    .uri("/internal/players/{accountId}/active-table", accountId)
+                    .header("X-Game-Service-Key", serviceKey)
+                    .retrieve()
+                    .body(TableCreatedResponse.class);
+            return Optional.ofNullable(response);
+        } catch (RestClientResponseException exception) {
+            throw new GameCallUnknownException("Không kiểm tra được bàn đang hoạt động của người chơi", exception);
         } catch (RuntimeException exception) {
             throw new GameCallUnknownException("Không kết nối được game-service", exception);
         }

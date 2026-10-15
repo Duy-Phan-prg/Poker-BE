@@ -38,7 +38,7 @@ Không triển khai Custom Room, Tournament, Elo, ví, bạn bè hoặc chat tro
 | Java package | chữ thường, theo tầng hiện có | `com.msspoker.matchmakingservice.service` |
 | Java class | PascalCase, tên nói rõ vai trò | `RankMatchmakingService`, `ProposalExpiryWorker` |
 | Method/field | camelCase, động từ trước | `joinQueue`, `reserveCandidates`, `acceptProposal` |
-| REST | danh từ số nhiều, dưới `/api/matchmaking` | `/api/matchmaking/queues/rank` |
+| REST | route theo mode và hành động, dưới `/api/matchmaking` | `/api/matchmaking/normal/join` |
 | DB table/column | `snake_case` | `match_proposal_players`, `accepted_at` |
 | Enum | `UPPER_SNAKE_CASE` | `WAITING_ACCEPTANCE`, `REFUND_PENDING` |
 | Error code | tiền tố `MM_` | `MM_ALREADY_QUEUED`, `MM_PROPOSAL_EXPIRED` |
@@ -75,11 +75,15 @@ hơn nếu chưa cập nhật SPEC và được service liên quan review.
 ### Normal
 
 1. Lưu queue bằng Redis, ưu tiên `joinedAt`.
-2. Đủ `minPlayers` thì reserve nguyên tử.
-3. Gọi Game ngay, không Ranking, không Wallet, không proposal accept.
-4. Game lỗi thì release reservation và requeue giữ thời điểm chờ cũ.
+2. Có ít hơn `minPlayers` thì tiếp tục chờ và chưa tạo countdown.
+3. Đạt `minPlayers` thì tạo `matchStartDeadline` sau 10 giây và tiếp tục gom người.
+4. Đạt `maxPlayers` trước deadline thì reserve nguyên tử và tạo trận ngay.
+5. Hết deadline với từ `minPlayers` đến `maxPlayers - 1` thì reserve nguyên tử số người hiện có.
+6. Tụt xuống dưới `minPlayers` trước deadline thì hủy/reset countdown.
+7. Gọi Game ngay sau khi reserve, không Ranking, không Wallet, không proposal accept.
+8. Game lỗi thì release reservation và requeue giữ thời điểm chờ cũ.
 
-Các giá trị `minPlayers`, `initialGap`, `gapIncrement`, `expansionInterval`,
+Các giá trị `minPlayers`, `maxPlayers`, `normalFillTimeout`, `initialGap`, `gapIncrement`, `expansionInterval`,
 `acceptTimeout` và `cooldown` đều nằm trong `MatchmakingProperties`; không hard-code
 trong service/worker.
 
@@ -117,6 +121,8 @@ check constraint quan trọng.
 - `MatchmakingProperties` có validate cho toàn bộ tham số.
 - `QueueStore` interface và `RedisQueueStore` implementation.
 - Join/cancel/status API; một account chỉ ở một queue/proposal hoạt động.
+- Join kiểm tra cả proposal `CREATING_TABLE` trong PostgreSQL và active table từ Game; trận lịch sử đã kết thúc không chặn queue mới.
+- Leave xóa queue entry khỏi Redis; nếu số người còn lại dưới `minPlayers` thì reset countdown.
 - Lua script reserve/release/requeue nguyên tử.
 - `NormalMatchWorker` lấy nhóm theo thời gian chờ và gọi `GameClient`.
 - `GameClient` production và stub dev/test theo interface.
@@ -202,6 +208,21 @@ Mock được chọn bằng Spring profile/bean, không viết `if (dev)` trong 
 không fallback âm thầm sang mock ở production.
 
 ## 6. Tiến độ hiện tại
+
+### Swagger / OpenAPI (bổ sung 2026-10-15)
+
+- [x] Thêm Springdoc và Swagger UI cho ba API hiện có: join, cancel và status.
+- [x] Mô tả header `X-User-Id`, request `NORMAL`, response status và các HTTP status chính.
+- [x] Cho phép tắt bằng `MATCHMAKING_SWAGGER_ENABLED=false`.
+- [ ] Swagger chưa có API Rank vì Đợt 3 chưa triển khai.
+- [ ] Swagger chưa có proposal accept/decline/timeout vì Đợt 4 chưa triển khai.
+- [ ] Swagger chưa mô tả Wallet debit/refund vì Đợt 5 chưa triển khai.
+- [ ] Swagger không kiểm chứng notification/outbox/RabbitMQ vì Đợt 6 chưa triển khai.
+- [ ] Swagger chưa được aggregate tại API Gateway và route Gateway cần được kiểm tra E2E.
+- [ ] Chưa có automated OpenAPI contract test để phát hiện breaking change.
+
+Swagger hiện là công cụ test contract HTTP của flow `NORMAL`, không phải bằng chứng rằng các mục
+hardening, integration test hoặc E2E bên dưới đã hoàn tất.
 
 - [x] Đợt 0: dependency, cấu hình, Compose, Flyway V1 và exception chuẩn.
 - [x] Đợt 1 — phạm vi Normal: entity/repository proposal, DTO và MapStruct mapper;

@@ -1,15 +1,19 @@
 package com.msspoker.matchmakingservice.service.impl;
 
+import com.msspoker.matchmakingservice.config.MatchmakingProperties;
 import com.msspoker.matchmakingservice.dto.response.QueueStatusResponse;
+import com.msspoker.matchmakingservice.dto.response.NormalReconnectResponse;
+import com.msspoker.matchmakingservice.dto.response.TableCreatedResponse;
 import com.msspoker.matchmakingservice.enums.MatchMode;
 import com.msspoker.matchmakingservice.enums.MatchmakingError;
 import com.msspoker.matchmakingservice.exception.MatchmakingApiException;
 import com.msspoker.matchmakingservice.mapper.QueueStatusMapper;
 import com.msspoker.matchmakingservice.model.QueueEntry;
+import com.msspoker.matchmakingservice.model.InGameSession;
 import com.msspoker.matchmakingservice.repository.MatchProposalPlayerRepository;
-import com.msspoker.matchmakingservice.service.MatchmakingQueueService;
+import com.msspoker.matchmakingservice.service.NormalMatchmakingService;
+import com.msspoker.matchmakingservice.service.GameClient;
 import com.msspoker.matchmakingservice.service.QueueStore;
-import com.msspoker.matchmakingservice.validator.QueueModeValidator;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 
@@ -19,37 +23,47 @@ import java.util.Optional;
 import java.util.UUID;
 
 @Service
-public class MatchmakingQueueServiceImpl implements MatchmakingQueueService {
+public class NormalMatchmakingServiceImpl implements NormalMatchmakingService {
     private final QueueStore queueStore;
     private final MatchProposalPlayerRepository players;
     private final Clock clock;
-    private final QueueModeValidator modeValidator;
     private final QueueStatusMapper statusMapper;
+    private final MatchmakingProperties properties;
+    private final GameClient game;
 
-    public MatchmakingQueueServiceImpl(
+    public NormalMatchmakingServiceImpl(
             QueueStore queueStore,
             MatchProposalPlayerRepository players,
             Clock clock,
-            QueueModeValidator modeValidator,
-            QueueStatusMapper statusMapper
+            QueueStatusMapper statusMapper,
+            MatchmakingProperties properties,
+            GameClient game
     ) {
         this.queueStore = queueStore;
         this.players = players;
         this.clock = clock;
-        this.modeValidator = modeValidator;
         this.statusMapper = statusMapper;
+        this.properties = properties;
+        this.game = game;
     }
 
     @Override
-    public QueueStatusResponse join(UUID accountId, MatchMode mode) {
-        modeValidator.requireAvailable(mode);
-
+    public QueueStatusResponse join(UUID accountId) {
+        MatchMode mode = MatchMode.NORMAL;
         Optional<QueueEntry> existing = queueStore.find(accountId);
         if (existing.isPresent()) {
             throw new MatchmakingApiException(
                     MatchmakingError.MM_ALREADY_QUEUED,
                     HttpStatus.CONFLICT,
                     "Tài khoản đã ở trong hàng chờ."
+            );
+        }
+
+        if (players.existsActiveProposal(accountId) || game.activeTable(accountId).isPresent()) {
+            throw new MatchmakingApiException(
+                    MatchmakingError.MM_MATCH_IN_PROGRESS,
+                    HttpStatus.CONFLICT,
+                    "Tài khoản đang trong quá trình tạo bàn hoặc đang ở một trận khác."
             );
         }
 
@@ -66,7 +80,7 @@ public class MatchmakingQueueServiceImpl implements MatchmakingQueueService {
     }
 
     @Override
-    public void cancel(UUID accountId) {
+    public void leave(UUID accountId) {
         QueueEntry entry = queueStore.find(accountId).orElseThrow(() -> new MatchmakingApiException(
                 MatchmakingError.MM_NOT_QUEUED,
                 HttpStatus.NOT_FOUND,
@@ -88,6 +102,9 @@ public class MatchmakingQueueServiceImpl implements MatchmakingQueueService {
                     "Tài khoản không ở trong hàng chờ."
             );
         }
+        if (queueStore.size(entry.mode()) < properties.getNormal().getMinPlayers()) {
+            queueStore.cancelCountdown(entry.mode());
+        }
     }
 
     @Override
@@ -107,10 +124,42 @@ public class MatchmakingQueueServiceImpl implements MatchmakingQueueService {
                 .orElseGet(QueueStatusResponse::none);
     }
 
+    @Override
+    public NormalReconnectResponse reconnect(UUID accountId) {
+        Optional<InGameSession> storedSession = queueStore.inGame(accountId);
+        if (storedSession.isEmpty()) {
+            return NormalReconnectResponse.none();
+        }
+
+        InGameSession session = storedSession.get();
+        Optional<TableCreatedResponse> activeTable = game.activeTable(accountId);
+        if (activeTable.isEmpty()
+                || !session.tableId().equals(activeTable.get().tableId())
+                || !session.matchId().equals(activeTable.get().matchId())) {
+            queueStore.clearInGame(accountId);
+            return NormalReconnectResponse.none();
+        }
+
+        return NormalReconnectResponse.active(
+                session.proposalId(),
+                session.tableId(),
+                session.matchId(),
+                session.host(),
+                session.port(),
+                session.websocketPath()
+        );
+    }
+
     private QueueStatusResponse waiting(QueueEntry entry) {
+        Optional<Instant> deadline = queueStore.countdownDeadline(entry.mode());
         return statusMapper.waiting(
                 entry,
-                queueStore.position(entry.accountId(), entry.mode()).orElse(null)
+                deadline.isPresent() ? "COUNTDOWN" : "WAITING",
+                queueStore.position(entry.accountId(), entry.mode()).orElse(null),
+                queueStore.size(entry.mode()),
+                properties.getNormal().getMinPlayers(),
+                properties.getNormal().getMaxPlayers(),
+                deadline.orElse(null)
         );
     }
 }

@@ -3,6 +3,7 @@ package com.msspoker.matchmakingservice.service.impl;
 import com.msspoker.matchmakingservice.config.MatchmakingProperties;
 import com.msspoker.matchmakingservice.enums.MatchMode;
 import com.msspoker.matchmakingservice.model.QueueEntry;
+import com.msspoker.matchmakingservice.model.InGameSession;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -80,7 +81,19 @@ class RedisQueueStoreConcurrencyTest {
             assertThat(store.oldest(MatchMode.NORMAL, 2)).isEmpty();
         } finally {
             workers.shutdownNow();
-            store.complete(entries);
+            InGameSession session = new InGameSession(
+                    MatchMode.NORMAL,
+                    UUID.randomUUID(),
+                    UUID.randomUUID(),
+                    UUID.randomUUID(),
+                    "localhost",
+                    8082,
+                    "/ws/game"
+            );
+            store.complete(entries, session);
+            assertThat(store.inGame(entries.getFirst().accountId())).contains(session);
+            assertThat(store.inGame(entries.getLast().accountId())).contains(session);
+            entries.forEach(entry -> store.clearInGame(entry.accountId()));
         }
     }
 

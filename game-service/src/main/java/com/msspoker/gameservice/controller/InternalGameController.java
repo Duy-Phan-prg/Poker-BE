@@ -13,6 +13,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.UUID;
+import java.util.Optional;
 
 @RestController
 @RequiredArgsConstructor
@@ -24,6 +25,11 @@ public class InternalGameController {
     @PostMapping("/tables")
     public TableCreatedResponse create(@Valid @RequestBody CreateTableRequest request) {
         return tables.create(request);
+    }
+
+    @GetMapping("/players/{accountId}/active-table")
+    public Optional<TableCreatedResponse> activeTable(@PathVariable UUID accountId) {
+        return tables.active(accountId);
     }
 
     @GetMapping("/matches")

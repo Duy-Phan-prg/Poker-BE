@@ -1,6 +1,7 @@
 package com.msspoker.matchmakingservice.service.impl;
 
 import com.msspoker.matchmakingservice.dto.response.TableCreatedResponse;
+import com.msspoker.matchmakingservice.config.MatchmakingProperties;
 import com.msspoker.matchmakingservice.enums.MatchMode;
 import com.msspoker.matchmakingservice.exception.GameCallRejectedException;
 import com.msspoker.matchmakingservice.exception.GameCallUnknownException;
@@ -21,7 +22,10 @@ class NormalMatchCoordinatorImplTest {
     private final ProposalPersistenceService persistence = mock(ProposalPersistenceService.class);
     private final GameClient game = mock(GameClient.class);
     private final QueueStore queueStore = mock(QueueStore.class);
-    private final NormalMatchCoordinatorImpl coordinator = new NormalMatchCoordinatorImpl(persistence, game, queueStore);
+    private final MatchmakingProperties properties = new MatchmakingProperties();
+    private final NormalMatchCoordinatorImpl coordinator = new NormalMatchCoordinatorImpl(
+            persistence, game, queueStore, properties
+    );
 
     @Test
     void marksReadyAndRemovesQueueStateWhenGameCreatesTable() {
@@ -35,7 +39,15 @@ class NormalMatchCoordinatorImplTest {
 
         verify(persistence).createNormal(proposalId, entries);
         verify(persistence).ready(proposalId, tableId, matchId);
-        verify(queueStore).complete(entries);
+        verify(queueStore).complete(eq(entries), argThat(session ->
+                session.mode() == MatchMode.NORMAL
+                        && session.proposalId().equals(proposalId)
+                        && session.tableId().equals(tableId)
+                        && session.matchId().equals(matchId)
+                        && session.host().equals("localhost")
+                        && session.port() == 8082
+                        && session.websocketPath().equals("/ws/game")
+        ));
         verify(queueStore, never()).requeue(anyList());
     }
 
@@ -61,7 +73,7 @@ class NormalMatchCoordinatorImplTest {
 
         verify(persistence, never()).failed(any(), any());
         verify(queueStore, never()).requeue(anyList());
-        verify(queueStore, never()).complete(anyList());
+        verify(queueStore, never()).complete(anyList(), any());
     }
 
     private List<QueueEntry> entries() {

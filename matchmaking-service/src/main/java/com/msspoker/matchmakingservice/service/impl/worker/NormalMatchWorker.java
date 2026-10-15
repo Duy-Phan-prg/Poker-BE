@@ -12,6 +12,8 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
+import java.time.Clock;
+import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -24,15 +26,18 @@ public class NormalMatchWorker {
     private final QueueStore queueStore;
     private final NormalMatchCoordinator coordinator;
     private final MatchmakingProperties properties;
+    private final Clock clock;
 
     public NormalMatchWorker(
             QueueStore queueStore,
             NormalMatchCoordinator coordinator,
-            MatchmakingProperties properties
+            MatchmakingProperties properties,
+            Clock clock
     ) {
         this.queueStore = queueStore;
         this.coordinator = coordinator;
         this.properties = properties;
+        this.clock = clock;
     }
 
     @Scheduled(fixedDelayString = "${matchmaking.finder.fixed-delay-ms:1000}")
@@ -41,12 +46,31 @@ public class NormalMatchWorker {
         if (lock.isEmpty()) return;
 
         try {
-            int playerCount = properties.getNormal().getMinPlayers();
-            List<QueueEntry> entries = queueStore.oldest(MatchMode.NORMAL, playerCount);
-            if (entries.size() < playerCount) return;
+            int minPlayers = properties.getNormal().getMinPlayers();
+            int maxPlayers = properties.getNormal().getMaxPlayers();
+            List<QueueEntry> entries = queueStore.oldest(MatchMode.NORMAL, maxPlayers);
+
+            if (entries.size() < minPlayers) {
+                queueStore.cancelCountdown(MatchMode.NORMAL);
+                return;
+            }
+
+            Instant now = clock.instant();
+            if (entries.size() < maxPlayers) {
+                Optional<Instant> deadline = queueStore.countdownDeadline(MatchMode.NORMAL);
+                if (deadline.isEmpty()) {
+                    queueStore.startCountdown(
+                            MatchMode.NORMAL,
+                            now.plus(properties.getNormal().getFillTimeout())
+                    );
+                    return;
+                }
+                if (now.isBefore(deadline.get())) return;
+            }
 
             UUID proposalId = MatchmakingIds.newProposalId();
             if (!queueStore.reserve(MatchMode.NORMAL, entries, proposalId)) return;
+            queueStore.cancelCountdown(MatchMode.NORMAL);
             coordinator.start(proposalId, entries);
         } catch (RuntimeException exception) {
             log.error("Normal match finder failed", exception);

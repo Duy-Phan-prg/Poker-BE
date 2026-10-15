@@ -191,7 +191,7 @@ matchmaking-service/
     │   │   ├── constant/
     │   │   │   └── MatchmakingConstants.java
     │   │   ├── controller/
-    │   │   │   └── MatchmakingController.java
+    │   │   │   └── NormalMatchmakingController.java
     │   │   ├── dto/
     │   │   │   ├── request/
     │   │   │   ├── response/
@@ -221,13 +221,13 @@ matchmaking-service/
     │   │   │   ├── WalletOperationRepository.java
     │   │   │   └── OutboxRepository.java
     │   │   ├── service/
-    │   │   │   ├── MatchmakingQueueService.java
+    │   │   │   ├── NormalMatchmakingService.java
     │   │   │   ├── QueueStore.java
     │   │   │   ├── GameClient.java
     │   │   │   ├── NormalMatchCoordinator.java
     │   │   │   └── ProposalPersistenceService.java
     │   │   ├── service/impl/
-    │   │   │   ├── MatchmakingQueueServiceImpl.java
+    │   │   │   ├── NormalMatchmakingServiceImpl.java
     │   │   │   ├── RedisQueueStore.java
     │   │   │   ├── NormalMatchCoordinatorImpl.java
     │   │   │   ├── ProposalPersistenceServiceImpl.java
@@ -236,8 +236,6 @@ matchmaking-service/
     │   │   │   └── worker/
     │   │   │       ├── NormalMatchWorker.java
     │   │   │       └── NormalRecoveryWorker.java
-    │   │   ├── validator/
-    │   │   │   └── QueueModeValidator.java
     │   │   └── util/MatchmakingIds.java
     │   └── resources/
     │       ├── application.properties
@@ -300,12 +298,15 @@ mm:v1:queue:NORMAL
 mm:v1:entry:{accountId}
 mm:v1:reservation:{accountId}
 mm:v1:proposal:{proposalId}
+mm:v1:in-game:{accountId}
 mm:v1:lock:finder:{mode}
 mm:v1:cooldown:{accountId}
 ```
 
 - Queue Rank dùng Sorted Set; score ưu tiên theo thời điểm vào hàng.
 - Metadata entry lưu accountId, Elo snapshot, win/loss streak và joinedAt.
+- `in-game` lưu `IN_GAME`, mode, proposalId, tableId, matchId và địa chỉ Game public để reconnect.
+- Chỉ trả thông tin reconnect khi Game vẫn xác nhận đúng tableId/matchId; record stale phải bị xóa.
 - Mọi key tạm phải có TTL hợp lý; lock phải có lease time.
 - Redis mất dữ liệu không được làm mất thông tin thu/hoàn phí đã ghi PostgreSQL.
 - Không dùng `KEYS`; dùng key trực tiếp hoặc `SCAN` khi thật sự cần.
@@ -316,9 +317,10 @@ Các route đi qua Gateway và lấy danh tính từ `X-User-Id`:
 
 | Method | Endpoint | Ý nghĩa |
 |---|---|---|
-| `POST` | `/api/matchmaking/queue` | Vào hàng chờ với `mode = RANK/NORMAL` |
-| `DELETE` | `/api/matchmaking/queue` | Hủy hàng chờ của chính mình |
-| `GET` | `/api/matchmaking/status` | Trạng thái queue/proposal/table hiện tại |
+| `POST` | `/api/matchmaking/normal/join` | Vào hàng chờ Normal |
+| `DELETE` | `/api/matchmaking/normal/leave` | Rời hàng chờ Normal |
+| `GET` | `/api/matchmaking/normal/status` | Trạng thái queue/proposal/table Normal hiện tại |
+| `GET` | `/api/matchmaking/normal/reconnect` | Lấy bàn Normal đang hoạt động để client nối lại |
 | `GET` | `/api/matchmaking/proposals/{id}` | Đọc proposal của thành viên |
 | `POST` | `/api/matchmaking/proposals/{id}/accept` | Chấp nhận trong thời hạn |
 | `POST` | `/api/matchmaking/proposals/{id}/decline` | Từ chối proposal |
@@ -327,6 +329,35 @@ Không nhận `accountId` từ body cho thao tác của người dùng. Luôn d�
 Gateway gắn. Client tự gửi header này phải bị Gateway loại bỏ.
 
 `/internal/**` không được route công khai qua Gateway.
+
+### 5.1. Quy tắc đồng bộ tên API, Swagger và code
+
+Tên public API là hợp đồng chính thức và phải phản ánh đúng mode cùng hành động:
+
+```text
+/api/matchmaking/{mode}/{action}
+```
+
+- `{mode}` viết thường: `normal`, `rank`.
+- `{action}` dùng đúng nghiệp vụ: `join`, `leave`, `status`, `reconnect`; không dùng route chung
+  mơ hồ như `/queue` rồi truyền `mode` trong request body.
+- Mỗi mode có controller và service riêng. Ví dụ Normal phải dùng
+  `NormalMatchmakingController`, `NormalMatchmakingService` và
+  `NormalMatchmakingServiceImpl`.
+- Method trong controller/service dùng tên hành động giống API: `join`, `leave`,
+  `status`, `reconnect`. Tên kỹ thuật tầng hạ tầng như `QueueStore` hoặc `RedisQueueStore` được
+  giữ theo trách nhiệm nội bộ, không phải đổi theo route public.
+- Swagger `operationId` phải duy nhất trên toàn service và có mode trong tên:
+  `joinNormal`, `leaveNormal`, `getNormalStatus`, `reconnectNormal`; Rank tương ứng dùng
+  `joinRank`, `leaveRank`, `getRankStatus`, `reconnectRank`.
+- Swagger chỉ công bố endpoint đã implement. Không tạo endpoint giả cho Rank hoặc
+  Custom chỉ để hiện nhóm trên giao diện.
+- Custom Room thuộc `competition-service`, không đặt route Custom trong
+  `matchmaking-service`.
+- Khi đổi public API, phải cập nhật đồng thời controller, Swagger annotation,
+  test, `README.md`, tài liệu spec và client gọi API trong cùng thay đổi.
+- Không nhận `accountId` hay `mode` từ body của Normal join/leave/status;
+  `accountId` lấy từ `X-User-Id`, còn mode được xác định bởi route `/normal/`.
 
 ## 6. Hợp đồng outbound bắt buộc
 
