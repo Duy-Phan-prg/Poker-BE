@@ -239,13 +239,71 @@ không fallback âm thầm sang mock ở production.
   bao gồm context/Flyway, queue service, coordinator, worker và Redis concurrency.
 - [ ] Đợt 2 vẫn chưa hoàn tất: còn E2E với PostgreSQL và Game service thật trong Docker.
 
+### Mục tiêu hardening Normal trước khi phát triển tính năng mới
+
+Normal hiện mới đạt mức compile và test các happy/error path cục bộ; chưa được xem là
+production-ready. Tạm dừng Rank, Swagger và FE cho đến khi hoàn thành các mục dưới đây.
+
+#### Tính nhất quán Redis ↔ PostgreSQL
+
+- [ ] Chốt state machine Normal và nguồn dữ liệu chính cho từng trạng thái. Sau khi proposal
+  được tạo, PostgreSQL là nguồn sự thật; Redis chỉ giữ queue/reservation tạm thời.
+- [ ] Xử lý crash window khi Redis đã reserve nhưng process chết trước khi ghi proposal vào
+  PostgreSQL; account phải được tự động khôi phục về queue với `joinedAt` cũ.
+- [ ] Không để reservation TTL hết hạn làm API trả `WAITING` trong khi proposal DB vẫn
+  `CREATING_TABLE`; status/cancel phải kiểm tra proposal active trong PostgreSQL.
+- [ ] Xử lý crash window khi DB đã chuyển `READY` nhưng xóa Redis thất bại; cần reconciliation
+  idempotent để dọn entry/reservation còn sót.
+- [ ] `join()` phải từ chối account đang có proposal active, kể cả khi Redis entry đã mất.
+- [ ] Định nghĩa thời điểm `READY` và `FAILED` không còn được xem là trạng thái hiện tại;
+  không trả proposal lịch sử vô thời hạn từ API status.
+
+#### Redis atomicity và khả năng mở rộng
+
+- [ ] Chuyển `requeue` thành một Lua operation nguyên tử gồm khôi phục payload, `ZADD` giữ
+  `joinedAt` cũ và xóa reservation.
+- [ ] Rà soát `enqueue`, `cancel`, `reserve`, `complete`, `requeue` để mọi thao tác nhiều key
+  quan trọng đều nguyên tử hoặc có reconciliation rõ ràng.
+- [ ] Tách Lua khỏi Java text block sang `src/main/resources/redis/*.lua` để dễ review,
+  syntax-check và test độc lập.
+- [ ] Chốt phạm vi Redis deployment: nếu hỗ trợ Redis Cluster thì thiết kế hash tag để mọi key
+  của một Lua invocation cùng hash slot; nếu chỉ hỗ trợ standalone thì ghi rõ constraint này.
+- [ ] Không giữ finder lock trong lúc gọi Game. Lock chỉ bảo vệ bước chọn/reserve; sau khi
+  reserve thành công phải giải phóng để worker khác tiếp tục tạo nhóm mới.
+
+#### Dọn code dựng trước
+
+- [ ] Phân loại rõ code `CURRENT` và `FUTURE`: error code Rank/Wallet, URL dependency,
+  RabbitMQ, `wallet_operations`, `matchmaking_outbox` và các field Rank chưa có business flow.
+- [ ] Loại bỏ abstraction không tạo giá trị hoặc ghi chú rõ lý do giữ lại; ưu tiên giảm class
+  chỉ bọc một dòng như `MatchmakingIds` và validator chỉ phục vụ một mode.
+- [ ] Không đánh dấu dependency/event/table là đã triển khai chỉ vì đã có cấu hình hoặc migration.
+
+#### Test bắt buộc để hoàn tất Đợt 2
+
+- [ ] Integration test với PostgreSQL thật bằng Testcontainers, không chỉ H2 context test.
+- [ ] Contract/integration test HTTP thật giữa Matchmaking và Game service.
+- [ ] Test process chết sau Redis reserve nhưng trước DB commit.
+- [ ] Test reservation hết TTL khi proposal vẫn `CREATING_TABLE`.
+- [ ] Test Redis lỗi sau khi DB đã `READY` và reconciliation dọn trạng thái đúng.
+- [ ] Test cancel chạy đồng thời với reserve.
+- [ ] Test nhiều instance recovery cùng xử lý một proposal.
+- [ ] Test controller/API contract cho join, cancel, status và error response.
+- [ ] Test RabbitMQ/outbox chỉ khi chức năng event thực sự được triển khai; không tính vào
+  phạm vi Normal core hiện tại.
+
+Tiêu chí hoàn tất: không có account bị kẹt hoặc ghép hai lần tại các crash boundary; API status
+nhất quán với proposal DB; các thao tác Redis quan trọng nguyên tử; E2E Normal chạy qua Gateway,
+Redis, PostgreSQL và Game bằng Docker.
+
 ## 7. Thứ tự code ngay bây giờ
 
-1. Hoàn tất Đợt 2 bằng E2E Normal qua Docker với PostgreSQL, Redis và Game service thật.
-2. Kiểm tra DB có proposal/players đúng và retry cùng `sourceId` không tạo hai bàn.
-3. Sau khi E2E Normal xanh, bắt đầu Đợt 3: Ranking client → Rank admission → Elo widening
-   → Rank worker.
-4. Sau Rank matching mới triển khai proposal accept 10 giây, Wallet saga và outbox.
+1. Chốt state machine Normal và quy tắc Redis/PostgreSQL ownership.
+2. Sửa crash window, reservation TTL, active-proposal check và reconciliation.
+3. Làm Redis requeue/cleanup nguyên tử, tách Lua ra resource và thu hẹp finder lock.
+4. Dọn hoặc đánh dấu rõ code dành cho tương lai.
+5. Bổ sung integration/concurrency/failure test và chạy E2E Normal qua Docker.
+6. Chỉ sau khi toàn bộ checklist hardening xanh mới thêm Swagger, FE và Đợt 3 Rank.
 
 Lý do: Normal kiểm chứng queue, reservation và Game integration mà chưa kéo theo Elo,
 deadline và compensation tiền. Khi lõi đó ổn, Rank chỉ bổ sung admission, selection,
