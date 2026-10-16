@@ -2,7 +2,9 @@ package com.msspoker.matchmakingservice.service.impl;
 
 import com.msspoker.matchmakingservice.config.MatchmakingProperties;
 import com.msspoker.matchmakingservice.dto.request.CreateTableRequest;
+import com.msspoker.matchmakingservice.dto.response.GameMatchSettingsResponse;
 import com.msspoker.matchmakingservice.dto.response.TableCreatedResponse;
+import com.msspoker.matchmakingservice.enums.MatchMode;
 import com.msspoker.matchmakingservice.exception.GameCallRejectedException;
 import com.msspoker.matchmakingservice.exception.GameCallUnknownException;
 import com.msspoker.matchmakingservice.service.GameClient;
@@ -37,6 +39,27 @@ public class HttpGameClient implements GameClient {
         factory.setReadTimeout(timeout);
         this.game = RestClient.builder().baseUrl(gameUrl).requestFactory(factory).build();
         this.serviceKey = serviceKey;
+    }
+
+    @Override
+    public GameMatchSettingsResponse matchSettings(MatchMode mode) {
+        try {
+            GameMatchSettingsResponse response = game.get()
+                    .uri("/internal/match-settings/{mode}", mode)
+                    .header("X-Game-Service-Key", serviceKey)
+                    .retrieve()
+                    .body(GameMatchSettingsResponse.class);
+            if (response == null || response.mode() != mode) {
+                throw new GameCallUnknownException("Game trả Match Settings không hợp lệ", null);
+            }
+            return response;
+        } catch (RestClientResponseException exception) {
+            throw new GameCallUnknownException("Không đọc được Match Settings từ game-service", exception);
+        } catch (GameCallUnknownException exception) {
+            throw exception;
+        } catch (RuntimeException exception) {
+            throw new GameCallUnknownException("Không kết nối được game-service", exception);
+        }
     }
 
     @Override

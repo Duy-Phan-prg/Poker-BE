@@ -39,6 +39,31 @@ public class ProposalPersistenceServiceImpl implements ProposalPersistenceServic
 
     @Override
     @Transactional
+    public void createRank(UUID proposalId, List<QueueEntry> entries, long entryFee, Instant acceptDeadline) {
+        if (entries.isEmpty() || entries.stream().anyMatch(entry -> entry.elo() == null)) {
+            throw new IllegalArgumentException("Rank proposal cần Elo snapshot cho mọi người chơi");
+        }
+        Instant now = clock.instant();
+        int eloMin = entries.stream().mapToInt(QueueEntry::elo).min().orElseThrow();
+        int eloMax = entries.stream().mapToInt(QueueEntry::elo).max().orElseThrow();
+        MatchProposalEntity proposal = MatchProposalEntity.rank(
+                proposalId, entryFee, eloMin, eloMax, acceptDeadline, now
+        );
+        entries.forEach(entry -> proposal.addPlayer(
+                MatchProposalPlayerEntity.rankPending(
+                        entry.accountId(),
+                        entry.elo(),
+                        entry.winStreak(),
+                        entry.lossStreak(),
+                        entry.joinedAt(),
+                        now
+                )
+        ));
+        proposals.save(proposal);
+    }
+
+    @Override
+    @Transactional
     public void ready(UUID proposalId, UUID tableId, UUID matchId) {
         proposal(proposalId).ready(tableId, matchId, clock.instant());
     }

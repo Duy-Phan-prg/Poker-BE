@@ -1,250 +1,206 @@
-# Matchmaking Service — bằng chứng nghiên cứu và phạm vi áp dụng
+# Nghiên cứu ghép trận Normal, Party và Rank
 
-File này không coi blog hoặc documentation của hãng là “paper nghiên cứu”. Nguồn được
-chia thành ba mức để không đánh tráo bằng chứng:
+Tài liệu này chỉ dùng để định hướng thiết kế thuật toán và cách đo lường. Quy tắc nghiệp vụ chính
+vẫn được lấy từ `docs/SPEC.md` và cấu hình của dự án.
 
-1. **Empirical paper**: có dữ liệu game/người chơi thật.
-2. **Theoretical paper**: có mô hình toán hoặc chứng minh, nhưng không phải dữ liệu
-   Poker-BE.
-3. **Engineering reference**: tài liệu chính thức để chọn cấu trúc triển khai; không
-   chứng minh thuật toán matchmaking tốt hơn.
+## 1. Normal matchmaking
 
-`docs/SPEC.md` vẫn là yêu cầu nghiệp vụ cao nhất. Paper giúp chọn và giải thích cách
-làm, không được dùng để tự ý thay đổi ownership hoặc contract trong SPEC.
+Nguồn: [Xu, Yu và Wu — Rule Designs for Optimal Online Game Matchmaking](https://arxiv.org/abs/1911.11852)
 
-## 1. Paper có dữ liệu game/người chơi thật
+- Người chơi đi vào hàng chờ theo thời gian và hệ thống phải cân bằng giữa thời gian chờ với việc tạo trận sớm.
+- Ưu tiên người có `joinedAt` cũ để tránh một người phải chờ vô hạn.
+- Khi trả người chơi về hàng chờ, phải giữ `joinedAt` ban đầu.
+- Các mốc tối thiểu `2` người, tối đa `6` người và countdown `10 giây` là quy tắc của dự án, không phải kết luận của paper.
 
-### 1.1. Véron, Marin và Monnet — 28 triệu game sessions
+### Phần paper được áp dụng
 
-**Paper:** *Matchmaking in Multi-player On-line Games: Studying User Traces to
-Improve the User Experience*, NOSSDAV 2014.
+#### Mục II-B — k-player Games
 
-- DOI: https://doi.org/10.1145/2578260.2578265
-- Bản PDF của tác giả:
-  https://pages.lip6.fr/Olivier.Marin/Publis/nossdav14.pdf
-- Dữ liệu: public traces từ máy chủ League of Legends, hơn **28 triệu game sessions**.
-- Paper cho biết họ công bố database để nghiên cứu; cần kiểm tra lại khả năng tải tại
-  thời điểm triển khai vì liên kết/dịch vụ cũ có thể không còn hoạt động.
+Paper mô hình hóa việc người chơi lần lượt vào hàng chờ và trận được tạo khi hàng chờ có đủ người.
+Dự án chỉ áp dụng mô hình tổng quát này. Công thức thời gian chờ cho một trận có đúng `k` người
+không được dùng trực tiếp vì Normal cho phép bắt đầu với số người biến thiên từ `2` đến `6`.
 
-**Điều paper hỗ trợ:**
+Code liên quan:
 
-- Rank/skill ảnh hưởng đến chất lượng ghép và thời gian chờ.
-- Có trade-off thực tế: thu hẹp điều kiện để tăng độ tương đồng sẽ làm một số nhóm,
-  đặc biệt vùng rank hiếm, chờ lâu hơn.
-- Cần đo server response, queue time và matching precision từ trace thật thay vì chỉ
-  chọn tham số theo cảm giác.
+- [`NormalMatchWorker.find()`](src/main/java/com/msspoker/matchmakingservice/service/impl/worker/NormalMatchWorker.java): đọc số người đang chờ, kiểm tra `minPlayers`, `maxPlayers` và quyết định thời điểm tạo trận.
+- [`MatchmakingProperties.Normal`](src/main/java/com/msspoker/matchmakingservice/config/MatchmakingProperties.java): cấu hình số người tối thiểu, tối đa và thời gian chờ lấp bàn.
 
-**Giới hạn khi áp dụng:** đây là LoL hai đội, không phải Poker nhiều người. Paper không
-chứng minh rằng cửa sổ `100 Elo`, tăng `50` mỗi `15 giây` là đúng cho Poker-BE.
+#### Mục III-A — Central Queue or Two Queues?
 
-### 1.2. Claypool và cộng sự — dữ liệu khách quan + cảm nhận người chơi
+Paper so sánh việc tách người chơi đơn và nhóm có sẵn thành hai queue với việc cho họ chờ chung.
+Normal áp dụng một queue chung: solo và toàn bộ thành viên Party đều nằm trong queue `NORMAL`, sau đó
+worker chọn các đơn vị phù hợp để lấp bàn. Cách này cho phép Party thiếu người được ghép thêm solo hoặc Party khác.
 
-**Paper:** *Surrender at 20? Matchmaking in League of Legends*, IEEE Games,
-Entertainment, Media Conference, 2015.
+Code liên quan:
 
-- Trang tác giả: https://web.cs.wpi.edu/~claypool/papers/lol-matchmaking/
-- PDF: https://web.cs.wpi.edu/~claypool/papers/lol-matchmaking/paper.pdf
-- Dữ liệu: user study hơn **50 trận**, gồm rank/queue time và khảo sát cảm nhận.
-- Kết quả được báo cáo: median queue time dưới 60 giây trong mẫu; hơn 80% trận có
-  average team rank lệch không quá một rank, nhưng cảm nhận công bằng của người chơi
-  không hoàn toàn khớp với chỉ số rank.
+- [`RedisQueueStore`](src/main/java/com/msspoker/matchmakingservice/service/impl/RedisQueueStore.java): lưu solo và thành viên Party trong cùng Redis Sorted Set của mode `NORMAL`.
+- [`NormalMatchWorker.queueUnits()`](src/main/java/com/msspoker/matchmakingservice/service/impl/worker/NormalMatchWorker.java): chuyển queue chung thành các đơn vị solo hoặc Party trước khi chọn bàn.
 
-**Điều paper hỗ trợ:** không nên dùng mỗi Elo spread để tuyên bố trận “tốt”. Sau MVP
-cần thêm outcome metric và feedback/acceptance metric nếu nhóm muốn đánh giá trải
-nghiệm.
+#### Mục III-B — Service Order for Central Queue
 
-**Giới hạn:** mẫu nhỏ và là game 5v5. Không dùng kết quả này để suy ra tham số queue
-cụ thể cho Poker-BE.
+Paper phân tích ba thứ tự phục vụ: FIFO, Packing và LIFO. Dự án áp dụng FIFO kết hợp Packing:
 
-### 1.3. Chen và cộng sự — EOMM trên dữ liệu thật của EA
+- FIFO: đọc người có `joinedAt` cũ trước.
+- Packing: thêm lần lượt các đơn vị solo/Party nếu tổng số người không vượt quá `maxPlayers`.
+- Party là một đơn vị không thể tách; chỉ chọn Party khi tìm thấy đầy đủ thành viên của Party trong queue.
 
-**Paper:** *EOMM: An Engagement Optimized Matchmaking Framework*, WWW 2017.
+Code liên quan:
 
-- DOI: https://doi.org/10.1145/3038912.3052559
-- PDF: https://fuxiailab.github.io/EOMM/WWW2017_EOMM.pdf
-- Dữ liệu: mô phỏng dựa trên dữ liệu thật của một PvP game của EA; dataset gốc không
-  được paper công bố để Poker-BE tái lập độc lập.
-- Paper báo cáo churn risk thay đổi theo chuỗi kết quả gần đây và dùng player state,
-  skill model, churn prediction cùng graph matching.
+- [`RedisQueueStore.oldest()`](src/main/java/com/msspoker/matchmakingservice/service/impl/RedisQueueStore.java): đọc Redis Sorted Set từ score nhỏ đến lớn, tương ứng `joinedAt` cũ đến mới.
+- [`NormalMatchWorker.selectPack()`](src/main/java/com/msspoker/matchmakingservice/service/impl/worker/NormalMatchWorker.java): lấp bàn nhưng không vượt quá `maxPlayers`.
+- [`NormalMatchWorker.queueUnits()`](src/main/java/com/msspoker/matchmakingservice/service/impl/worker/NormalMatchWorker.java): giữ Party nguyên khối và không đưa Party thiếu thành viên vào trận.
 
-**Điều có thể học:** win/loss streak có thể là một tín hiệu trạng thái động; phải đo
-định lượng hiệu quả của policy.
+#### Mục III-C — Performance Assessment and Rule Design
 
-**Không áp dụng:** Poker-BE không tối ưu churn, spending hoặc cố tình tạo trận lệch để
-giữ chân người chơi. SPEC chỉ yêu cầu Elo và chuỗi thắng; streak trong MVP chỉ là
-tie-break có giới hạn và cần metric kiểm chứng.
+Paper kết luận central queue với FIFO/Packing phù hợp cho trận có số người nhỏ. Dự án dùng kết luận này
+làm cơ sở cho thứ tự chọn người, nhưng không sử dụng các công thức của paper để tính countdown.
 
-## 2. Paper mô hình hóa fairness và waiting time
+Mục II-D của paper gợi ý đo thời gian chờ trung bình và độ phân tán thời gian chờ. Đây là hướng đo lường;
+telemetry riêng cho các chỉ số này chưa được triển khai trong Normal hiện tại.
 
-### 2.1. Wu — Dynamic Matching with Teams
+### Phần paper không áp dụng
 
-**Paper:** Qingyun Wu, *Dynamic Matching with Teams*, Operations Research Letters,
-50(5), 2022, trang 618–622.
+- Mục IV về chọn phe không phù hợp vì poker không chia người chơi vào hai phe trước trận.
+- Mục V về nhiều vùng trình độ không dùng cho Normal và không dùng để mở rộng Elo window.
+- Appendix VII, gồm các công thức kỳ vọng thời gian chờ trong hình minh họa, không được đưa vào code.
+- Paper nghiên cứu chủ yếu trận cố định `k-player` và `2v2`; không định nghĩa rule `2–6 người` hoặc countdown `10 giây`.
 
-- DOI: https://doi.org/10.1016/j.orl.2022.09.002
-- PDF tác giả: https://qingyunwu.com/research/Dynamic%20Matching%20With%20Teams.pdf
-- Phương pháp: mô hình dynamic matching/Markov decision process cho người chơi đến
-  tuần tự; mục tiêu cân bằng độ lệch đội và chi phí chờ.
-
-**Điều paper hỗ trợ:** ghép ngay khi đủ người không luôn tối ưu. Chờ để pool “dày” hơn
-có thể tăng fairness, nhưng phải đánh đổi waiting cost. Vì vậy Matchmaking phải theo
-dõi đồng thời `queue_wait_seconds` và `matched_skill_spread`.
-
-**Giới hạn:** kết quả là mô hình lý thuyết và hai đội; không cung cấp trực tiếp công
-thức cửa sổ Elo cho Poker-BE.
-
-Graph liên quan trên Connected Papers:
-https://www.connectedpapers.com/main/43627a7730008045a41a7c6d756dc538df38fc95
-
-### 2.2. Xu, Yu và Wu — queueing theory cho matchmaking
-
-**Paper:** *Rule Designs for Optimal Online Game Matchmaking*, Chinese Control
-Conference 2021.
-
-- DOI: https://doi.org/10.23919/CCC52363.2021.9549977
-- Preprint: https://arxiv.org/abs/1911.11852
-- PDF tác giả:
-  https://mingkuan.taichi.graphics/publication/2021-matchmaking/matchmaking.pdf
-- Phương pháp: Continuous-Time Markov Chain/queueing theory cho game 2v2; phân tích
-  expected waiting time và variance giữa các service order/rule design.
-
-**Điều paper hỗ trợ:** mean wait chưa đủ; cần đo cả phân phối/variance hoặc p95 để
-tránh một nhóm bị “đói”. FIFO/tuổi ticket là một tiêu chí cần giữ khi tối ưu pool.
-
-**Giới hạn:** mô hình 2v2 và giả định arrival process; không chứng minh oldest-anchor
-là duy nhất hoặc tối ưu cho Poker nhiều người.
-
-### 2.3. Emek, Kutten và Wattenhofer — matching có chi phí trì hoãn
-
-**Paper:** *Online Matching: Haste Makes Waste!*, ACM STOC 2016.
-
-- Preprint: https://arxiv.org/abs/1603.03024
-- Phương pháp: min-cost perfect matching with delays; tổng cost gồm khoảng cách giữa
-  request được ghép và thời gian mỗi request phải đợi.
-
-**Điều paper hỗ trợ:** quality distance và waiting time phải nằm trong cùng bài toán,
-không thể tối ưu độc lập. Đây là cơ sở lý thuyết cho việc cửa sổ skill thay đổi theo
-tuổi ticket.
-
-**Giới hạn:** metric-space matching tổng quát, không phải thí nghiệm game Poker.
-
-## 3. Paper về skill rating
-
-### 3.1. TrueSkill và TrueSkill 2
-
-1. Herbrich, Minka, Graepel — *TrueSkill: A Bayesian Skill Rating System*, 2006:
-   https://www.microsoft.com/en-us/research/wp-content/uploads/2006/01/TR-2006-80.pdf
-2. Minka, Cleven, Zaykov — *TrueSkill 2*, 2018:
-   https://www.microsoft.com/en-us/research/wp-content/uploads/2018/03/trueskill2.pdf
-
-Hai paper này nghiên cứu **ước lượng skill**, không phải Redis queue, Saga hay Outbox.
-Chúng cho thấy skill nên được biểu diễn cùng độ bất định và có thể dùng để ước lượng
-match quality.
-
-**Quyết định của dự án:** không cài TrueSkill trong Matchmaking vì:
-
-- SPEC giao Elo cho `ranking-service` và cấm Matchmaking tự tính Elo.
-- Thêm TrueSkill tạo nguồn skill thứ hai, dễ mâu thuẫn với BXH và contract hiện tại.
-- Chưa có dataset Poker-BE để huấn luyện/kiểm định mô hình mới.
-
-Matchmaking chỉ đọc snapshot `{elo, winStreak, lossStreak}` từ Ranking. Nếu sau này
-đổi rating model thì thay tại Ranking và version contract, không nhét model vào queue.
-
-## 4. Paper về giao dịch phân tán
-
-### 4.1. Saga cho debit/refund
-
-**Paper:** Hector Garcia-Molina và Kenneth Salem, *Sagas*, ACM SIGMOD 1987.
-
-- DOI: https://doi.org/10.1145/38713.38742
-- Ý chính áp dụng: một giao dịch dài được tách thành các bước; mỗi bước đã commit có
-  compensating transaction nếu bước sau thất bại.
-
-Flow Rank được mô hình hóa như sau:
+Luồng Normal của dự án:
 
 ```text
-reserve -> accept all -> debit P1 -> ... -> debit Pn -> create table
-                             failure
-                                |
-                                v
-                 refund every successful debit -> requeue
+0–1 người: tiếp tục chờ
+→ đủ 2 người: bắt đầu countdown 10 giây
+→ trong countdown: tiếp tục nhận thêm người
+→ đủ 6 người: tạo trận ngay
+→ hết countdown và có 2–5 người: tạo trận
+→ tụt xuống dưới 2 người: hủy countdown
 ```
 
-`wallet_operations` phải lưu trạng thái bền vững để service restart vẫn tiếp tục
-compensation. Đây mới là áp dụng Saga; chỉ `catch` exception rồi gọi refund một lần
-không đủ.
+## 2. Party matchmaking
 
-## 5. Engineering references — không phải paper matchmaking
+Nguồn: [Pal — Cinder: A Fast and Fair Matchmaking System](https://arxiv.org/abs/2602.17015)
 
-Các nguồn sau chỉ giải thích công nghệ/pattern triển khai:
+Đây là preprint dùng để tham khảo cách xử lý lobby tạo sẵn, không áp dụng toàn bộ thuật toán của paper.
 
-| Quyết định kỹ thuật | Nguồn chính thức | Bằng chứng mà nguồn cung cấp |
-|---|---|---|
-| Redis Sorted Set | https://redis.io/docs/latest/develop/data-types/sorted-sets/ | Member duy nhất, có score và được giữ theo thứ tự |
-| Atomic reservation bằng Lua | https://redis.io/docs/latest/develop/programmability/eval-intro/ | Nhiều thao tác Redis được thực thi nguyên tử trong script |
-| Idempotent retry | https://aws.amazon.com/builders-library/making-retries-safe-with-idempotent-APIs/ | Cùng một ý định retry phải dùng cùng client request ID |
-| Transactional outbox | https://debezium.io/documentation/reference/stable/transformations/outbox-event-router.html | Business state và event record được giữ nhất quán trong DB |
-| Publisher confirm | https://www.rabbitmq.com/docs/confirms | Broker xác nhận publish; khác với consumer acknowledgement |
+- Party được xem là một đơn vị ghép trận, không tách thành viên sang nhiều trận.
+- Party có thể được ghép với người chơi đơn hoặc Party khác nếu tổng số người không vượt quá sức chứa bàn.
+- Nếu sau này cho Party chơi Rank, chênh lệch trình độ của các thành viên phải được đánh giá theo phân bố kỹ năng, không chỉ dựa vào Elo trung bình.
+- Normal hiện chỉ cần giữ Party nguyên khối và lấp chỗ trống; chưa cần các phép đo khoảng cách phức tạp của Cinder.
 
-Vì vậy phát biểu đúng là:
+### Phần paper được áp dụng
 
-- Chọn Sorted Set vì đặc tính dữ liệu phù hợp queue có thứ tự, **không phải vì một
-  paper chứng minh Sorted Set tối ưu cho matchmaking**.
-- Chọn Outbox/confirm vì cần độ tin cậy event, **không phải để tăng chất lượng ghép**.
-- Idempotency key theo SPEC; tài liệu Amazon giải thích cách retry an toàn.
+#### Mục 1 — Introduction
 
-## 6. Bảng truy nguyên quyết định
+Paper mô tả `lobby` là nhóm bạn đã lập sẵn trước khi vào matchmaking. Dự án áp dụng khái niệm này:
+Party là một đơn vị không thể tách khi đưa vào queue và khi chọn người cho bàn Normal.
 
-| Quyết định trong code | Bắt buộc từ SPEC | Paper hỗ trợ | Phần chưa được chứng minh |
-|---|---|---|---|
-| Ghép Rank theo Elo + streak | Có | Véron 2014; EOMM 2017 | Trọng số streak cho Poker-BE |
-| Nới Elo khi chờ lâu | Có | Wu 2022; Emek 2016 | Hàm nới và tham số cụ thể |
-| Ưu tiên người chờ lâu | Đề xuất thiết kế | Xu 2021 | Oldest-anchor có tối ưu với traffic thật hay không |
-| Proposal 10 giây | Có | Không cần paper | 10 giây có phù hợp UX thật hay không |
-| Cooldown 2 phút | Đề xuất trong SPEC | Chưa có bằng chứng phù hợp | Ảnh hưởng abandon/requeue |
-| Debit/refund | Có | Saga 1987 | Retry/timeout contract thực tế của Wallet |
-| Redis Sorted Set | Không chỉ định cấu trúc | Không | Benchmark với traffic Poker-BE |
-| Outbox RabbitMQ | Không chỉ định pattern | Không phải matchmaking research | Throughput/retry interval phù hợp |
+Code quản lý Party:
 
-## 7. Dữ liệu Poker-BE phải tự thu thập
+- [`PartyController`](src/main/java/com/msspoker/matchmakingservice/controller/PartyController.java): API tạo, mời, tham gia, kick và rời Party.
+- [`PartyServiceImpl`](src/main/java/com/msspoker/matchmakingservice/service/impl/PartyServiceImpl.java): kiểm tra leader, thành viên, giới hạn số người và trạng thái đang tìm trận.
+- [`RedisPartyStore`](src/main/java/com/msspoker/matchmakingservice/service/impl/RedisPartyStore.java): lưu Party, leader, mã mời và thành viên trong Redis.
+- [`redis/party-create.lua`](src/main/resources/redis/party-create.lua), [`party-invite.lua`](src/main/resources/redis/party-invite.lua), [`party-join.lua`](src/main/resources/redis/party-join.lua), [`party-kick.lua`](src/main/resources/redis/party-kick.lua) và [`party-leave.lua`](src/main/resources/redis/party-leave.lua): thay đổi Party nguyên tử.
 
-Paper ngoài không thể cho tham số tối ưu vì Poker-BE có số người/trận, phân phối Elo,
-traffic và UX riêng. Trước khi chốt `initialEloGap`, `gapIncrement` và
-`expansionInterval`, cần log ẩn danh:
+Code tích hợp Party vào Normal:
+
+- [`NormalMatchmakingServiceImpl.join()`](src/main/java/com/msspoker/matchmakingservice/service/impl/NormalMatchmakingServiceImpl.java): chỉ leader được đưa toàn bộ Party vào Normal queue.
+- [`NormalMatchmakingServiceImpl.leave()`](src/main/java/com/msspoker/matchmakingservice/service/impl/NormalMatchmakingServiceImpl.java): chỉ leader được hủy tìm trận cho toàn bộ Party.
+- [`RedisQueueStore.enqueueParty()`](src/main/java/com/msspoker/matchmakingservice/service/impl/RedisQueueStore.java) và [`redis/enqueue-party.lua`](src/main/resources/redis/enqueue-party.lua): kiểm tra đúng toàn bộ thành viên rồi enqueue nguyên tử.
+- [`RedisQueueStore.cancelParty()`](src/main/java/com/msspoker/matchmakingservice/service/impl/RedisQueueStore.java) và [`redis/cancel-party.lua`](src/main/resources/redis/cancel-party.lua): xóa toàn bộ Party khỏi queue nguyên tử và không cho xóa một phần khi đã reserve.
+- [`NormalMatchWorker.queueUnits()`](src/main/java/com/msspoker/matchmakingservice/service/impl/worker/NormalMatchWorker.java): tạo một unit chứa toàn bộ thành viên Party; Party thiếu thành viên trong queue sẽ không được chọn.
+- [`NormalMatchWorker.selectPack()`](src/main/java/com/msspoker/matchmakingservice/service/impl/worker/NormalMatchWorker.java): ghép Party với solo hoặc Party khác nếu tổng số người không vượt quá `maxPlayers`.
+
+### Phần paper chưa áp dụng
+
+- Mục 2 và 2.1 dùng khoảng rating và Ruzicka similarity để lọc hai lobby; Normal không đọc Elo nên không áp dụng.
+- Mục 3 chia rating thành các bucket phi tuyến; dự án chưa triển khai.
+- Mục 4 tính Kantorovich/Wasserstein distance và Sanction Score giữa hai lobby; dự án chưa triển khai.
+- Paper nghiên cứu độ công bằng giữa các lobby cạnh tranh, không định nghĩa API create/invite/join/kick/leave, quyền leader, Redis atomicity hoặc cách lấp một bàn poker `2–6` người.
+- Party hiện chỉ được chơi Normal. Nếu sau này hỗ trợ Party Rank thì phải thiết kế và duyệt rule riêng trước khi áp dụng các mục 2–4.
+
+Vì vậy, Cinder chỉ là cơ sở cho khái niệm **pre-made Party được giữ nguyên khối**. Các rule leader,
+invite code, tối đa `6` thành viên và ghép thêm người lạ là yêu cầu nghiệp vụ của dự án, không phải kết luận của paper.
+
+Mô hình áp dụng:
 
 ```text
-queue_entry_id
-mode
-elo_bucket
-win_streak_bucket
-joined_at
-matched_at / cancelled_at
-proposal_result
-matched_elo_min / matched_elo_max
-table_created
-match_duration
-finish_position
+Solo  = một đơn vị có kích thước 1
+Party = một đơn vị có kích thước bằng số thành viên
+Bàn   = sức chứa tối đa 6
 ```
 
-Không log display name, access token hoặc dữ liệu nhạy cảm.
+## 3. Rank matchmaking theo Elo
 
-Metric tối thiểu:
+Nguồn: [Véron, Marin và Monnet — Matchmaking in Multi-player On-line Games](https://pages.lip6.fr/Olivier.Marin/Publis/nossdav14.pdf)
 
-- queue wait p50/p90/p95/p99 theo mode và Elo bucket;
-- tỷ lệ cancel trước khi được ghép;
-- Elo spread p50/p95 của nhóm đã ghép;
-- proposal accept/decline/timeout rate;
-- tỷ lệ debit/refund/reconciliation;
-- tỷ lệ người chơi quay lại queue sau trận.
+- Elo là tiêu chí chính để chọn những người chơi có trình độ gần nhau.
+- Chỉ chọn người có độ chênh lệch Elo nằm trong ngưỡng cấu hình.
+- Ngưỡng thử nghiệm ban đầu của dự án là `100 Elo`.
+- Không tự mở rộng Elo window theo thời gian chờ.
+- Elo `0` vẫn hợp lệ để tham gia Rank; Elo là tiêu chí ghép trận, không phải điều kiện mở khóa.
+- Ngưỡng `100 Elo` là cấu hình thử nghiệm, cần được điều chỉnh bằng dữ liệu thực tế.
 
-Quy trình tuning:
+Số người của Rank không lấy từ paper. Game Match Settings là nguồn sự thật, mặc định `2–6`;
+khi Admin thay đổi `minPlayers`/`maxPlayers`, worker dùng giá trị mới cho lượt ghép tiếp theo.
 
-1. Khởi đầu bằng config bảo thủ, ghi rõ là baseline kỹ thuật.
-2. Replay traffic hoặc chạy discrete-event simulation bằng distribution đã thu được.
-3. So sánh nhiều policy trên cùng input: fixed window, linear widening, step widening.
-4. Chọn policy theo Pareto giữa wait p95 và Elo spread p95.
-5. A/B test nhỏ nếu dự án có đủ người dùng; rollback được bằng config.
+Snapshot dùng khi vào Rank queue:
 
-Các số `100 Elo`, `+50/15 giây` hiện tại **không phải kết quả paper và không phải dữ
-liệu Poker-BE**. Chúng chỉ được dùng làm baseline dev cho đến khi có trace thật.
+```text
+accountId, elo, winStreak, lossStreak, joinedAt
+```
 
+Thứ tự ưu tiên:
+
+```text
+Elo gần người chơi gốc
+→ chuỗi thắng/thua làm tiêu chí phụ
+→ joinedAt cũ hơn để phá hòa
+```
+
+Chuỗi thắng/thua không phải tiêu chí chính và không được làm người chơi chờ vô hạn.
+
+## 4. Redis queue và reservation nguyên tử
+
+Tài liệu kỹ thuật: [Redis Sorted Sets](https://redis.io/docs/latest/develop/data-types/sorted-sets/) ·
+[Redis Lua scripting](https://redis.io/docs/latest/develop/programmability/eval-intro/)
+
+Đây là tài liệu kỹ thuật triển khai, không phải paper về thuật toán matchmaking.
+
+- Dùng Redis Sorted Set để giữ thứ tự người chơi theo `joinedAt`.
+- Mỗi tài khoản chỉ có một entry trong hàng chờ.
+- Dùng Lua để reserve cả nhóm trong một thao tác nguyên tử.
+- Hai worker chạy đồng thời không được reserve trùng một người chơi.
+- Party phải được enqueue, cancel, reserve và requeue như một đơn vị nguyên tử.
+- Nếu reserve thất bại thì không tạo proposal và thử lại ở lượt sau.
+
+## Kết luận áp dụng
+
+### Normal
+
+```text
+Ưu tiên người chờ lâu
+→ gom đủ 2–6 người
+→ countdown 10 giây hoặc tạo ngay khi đủ 6
+→ reserve nguyên tử
+→ tạo bàn
+```
+
+### Party
+
+```text
+Xem Party là một đơn vị không thể tách
+→ ghép thêm Solo hoặc Party khác nếu còn chỗ
+→ reserve toàn bộ thành viên nguyên tử
+→ tạo bàn
+```
+
+### Rank
+
+```text
+Lấy Elo và streak từ ranking-service
+→ chọn người trong ngưỡng Elo cố định
+→ dùng streak làm tiêu chí phụ
+→ ưu tiên joinedAt cũ hơn
+→ reserve nguyên tử
+→ tạo proposal trận
+```

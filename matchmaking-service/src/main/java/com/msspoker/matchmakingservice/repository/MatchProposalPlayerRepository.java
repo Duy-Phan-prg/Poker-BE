@@ -8,6 +8,7 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 import java.util.Optional;
+import java.util.Collection;
 import java.util.UUID;
 
 public interface MatchProposalPlayerRepository extends JpaRepository<MatchProposalPlayerEntity, UUID> {
@@ -17,13 +18,30 @@ public interface MatchProposalPlayerRepository extends JpaRepository<MatchPropos
             ProposalStatus status
     );
 
+    @EntityGraph(attributePaths = "proposal")
+    Optional<MatchProposalPlayerEntity> findFirstByAccountIdAndIsDeletedFalseAndProposal_StatusInAndProposal_IsDeletedFalseOrderByCreatedAtDesc(
+            UUID accountId,
+            Collection<ProposalStatus> statuses
+    );
+
     @Query("""
             select (count(player) > 0)
             from MatchProposalPlayerEntity player
             where player.accountId = :accountId
               and player.isDeleted = false
               and player.proposal.isDeleted = false
-              and player.proposal.status = com.msspoker.matchmakingservice.enums.ProposalStatus.CREATING_TABLE
+              and player.proposal.status not in (
+                  com.msspoker.matchmakingservice.enums.ProposalStatus.READY,
+                  com.msspoker.matchmakingservice.enums.ProposalStatus.FAILED,
+                  com.msspoker.matchmakingservice.enums.ProposalStatus.DECLINED,
+                  com.msspoker.matchmakingservice.enums.ProposalStatus.EXPIRED
+              )
             """)
     boolean existsActiveProposal(@Param("accountId") UUID accountId);
+
+    @EntityGraph(attributePaths = "proposal")
+    java.util.List<MatchProposalPlayerEntity>
+    findTop50ByFeeChargedTrueAndFeeRefundedFalseAndIsDeletedFalseAndProposal_StatusInOrderByUpdatedAtAsc(
+            Collection<ProposalStatus> statuses
+    );
 }

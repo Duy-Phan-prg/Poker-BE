@@ -17,31 +17,60 @@ import java.time.Duration;
 @ConfigurationProperties(prefix = "matchmaking")
 public class MatchmakingProperties {
     @Valid private final Normal normal = new Normal();
+    @Valid private final Rank rank = new Rank();
     @Valid private final Queue queue = new Queue();
     @Valid private final Finder finder = new Finder();
     @Valid private final Game game = new Game();
     @Valid private final Recovery recovery = new Recovery();
+    @Valid private final Party party = new Party();
+    @Valid private final Ranking ranking = new Ranking();
+    @Valid private final Restriction restriction = new Restriction();
+    @Valid private final Wallet wallet = new Wallet();
 
     public Normal getNormal() { return normal; }
+    public Rank getRank() { return rank; }
     public Queue getQueue() { return queue; }
     public Finder getFinder() { return finder; }
     public Game getGame() { return game; }
     public Recovery getRecovery() { return recovery; }
+    public Party getParty() { return party; }
+    public Ranking getRanking() { return ranking; }
+    public Restriction getRestriction() { return restriction; }
+    public Wallet getWallet() { return wallet; }
 
     public static class Normal {
-        @Min(2) @Max(6) private int minPlayers = 2;
-        @Min(2) @Max(6) private int maxPlayers = 6;
         @NotNull private Duration fillTimeout = Duration.ofSeconds(10);
-        public int getMinPlayers() { return minPlayers; }
-        public void setMinPlayers(int minPlayers) { this.minPlayers = minPlayers; }
-        public int getMaxPlayers() { return maxPlayers; }
-        public void setMaxPlayers(int maxPlayers) { this.maxPlayers = maxPlayers; }
         public Duration getFillTimeout() { return fillTimeout; }
         public void setFillTimeout(Duration fillTimeout) { this.fillTimeout = fillTimeout; }
 
-        @AssertTrue(message = "matchmaking.normal phải có maxPlayers >= minPlayers và fillTimeout > 0")
+        @AssertTrue(message = "matchmaking.normal.fillTimeout phải lớn hơn 0")
         public boolean isValid() {
-            return maxPlayers >= minPlayers && fillTimeout != null && !fillTimeout.isZero() && !fillTimeout.isNegative();
+            return fillTimeout != null && !fillTimeout.isZero() && !fillTimeout.isNegative();
+        }
+    }
+
+    public static class Rank {
+        @Min(0) private int eloWindow = 100;
+        @Min(0) private long entryFee = 100;
+        @NotNull private Duration fillTimeout = Duration.ofSeconds(10);
+        @NotNull private Duration acceptTimeout = Duration.ofSeconds(10);
+        @NotNull private Duration cooldown = Duration.ofMinutes(2);
+        public int getEloWindow() { return eloWindow; }
+        public void setEloWindow(int eloWindow) { this.eloWindow = eloWindow; }
+        public long getEntryFee() { return entryFee; }
+        public void setEntryFee(long entryFee) { this.entryFee = entryFee; }
+        public Duration getFillTimeout() { return fillTimeout; }
+        public void setFillTimeout(Duration fillTimeout) { this.fillTimeout = fillTimeout; }
+        public Duration getAcceptTimeout() { return acceptTimeout; }
+        public void setAcceptTimeout(Duration acceptTimeout) { this.acceptTimeout = acceptTimeout; }
+        public Duration getCooldown() { return cooldown; }
+        public void setCooldown(Duration cooldown) { this.cooldown = cooldown; }
+
+        @AssertTrue(message = "matchmaking.rank fillTimeout/acceptTimeout/cooldown phải lớn hơn 0")
+        public boolean isValid() {
+            return fillTimeout != null && !fillTimeout.isZero() && !fillTimeout.isNegative()
+                    && acceptTimeout != null && !acceptTimeout.isZero() && !acceptTimeout.isNegative()
+                    && cooldown != null && !cooldown.isZero() && !cooldown.isNegative();
         }
     }
 
@@ -94,5 +123,41 @@ public class MatchmakingProperties {
         public void setFixedDelayMs(long fixedDelayMs) { this.fixedDelayMs = fixedDelayMs; }
         public Duration getRetryAfter() { return retryAfter; }
         public void setRetryAfter(Duration retryAfter) { this.retryAfter = retryAfter; }
+    }
+
+    public static class Party {
+        @Min(2) @Max(6) private int maxMembers = 6;
+        @NotNull private Duration inviteTtl = Duration.ofMinutes(15);
+        public int getMaxMembers() { return maxMembers; }
+        public void setMaxMembers(int maxMembers) { this.maxMembers = maxMembers; }
+        public Duration getInviteTtl() { return inviteTtl; }
+        public void setInviteTtl(Duration inviteTtl) { this.inviteTtl = inviteTtl; }
+    }
+
+    public static class Ranking {
+        @NotNull private Duration timeout = Duration.ofSeconds(3);
+        private boolean stubEnabled;
+        public Duration getTimeout() { return timeout; }
+        public void setTimeout(Duration timeout) { this.timeout = timeout; }
+        public boolean isStubEnabled() { return stubEnabled; }
+        public void setStubEnabled(boolean stubEnabled) { this.stubEnabled = stubEnabled; }
+    }
+
+    public static class Restriction {
+        @NotNull private Duration timeout = Duration.ofSeconds(3);
+        private boolean stubEnabled;
+        public Duration getTimeout() { return timeout; }
+        public void setTimeout(Duration timeout) { this.timeout = timeout; }
+        public boolean isStubEnabled() { return stubEnabled; }
+        public void setStubEnabled(boolean stubEnabled) { this.stubEnabled = stubEnabled; }
+    }
+
+    public static class Wallet {
+        @NotNull private Duration timeout = Duration.ofSeconds(3);
+        private boolean stubEnabled;
+        public Duration getTimeout() { return timeout; }
+        public void setTimeout(Duration timeout) { this.timeout = timeout; }
+        public boolean isStubEnabled() { return stubEnabled; }
+        public void setStubEnabled(boolean stubEnabled) { this.stubEnabled = stubEnabled; }
     }
 }

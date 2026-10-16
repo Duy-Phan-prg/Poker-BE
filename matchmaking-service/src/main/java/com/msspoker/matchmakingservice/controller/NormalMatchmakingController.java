@@ -30,7 +30,7 @@ public class NormalMatchmakingController {
 
     @PostMapping("/join")
     @ResponseStatus(HttpStatus.CREATED)
-    @Operation(operationId = "joinNormal", summary = "Join Normal", description = "Đưa người chơi vào hàng chờ NORMAL trong Redis.")
+    @Operation(operationId = "joinNormal", summary = "Join Normal", description = "Đưa người chơi solo hoặc toàn bộ Party nếu người gọi là chủ Party vào hàng chờ NORMAL.")
     @ApiResponses({
             @ApiResponse(responseCode = "201", description = "Đã vào hàng chờ"),
             @ApiResponse(responseCode = "401", description = "Thiếu X-User-Id", content = @Content),
@@ -45,7 +45,7 @@ public class NormalMatchmakingController {
 
     @DeleteMapping("/leave")
     @ResponseStatus(HttpStatus.NO_CONTENT)
-    @Operation(operationId = "leaveNormal", summary = "Leave Normal", description = "Rời hàng chờ NORMAL nếu chưa bị reserve để tạo trận.")
+    @Operation(operationId = "leaveNormal", summary = "Leave Normal", description = "Rời hàng chờ NORMAL; chủ Party sẽ hủy queue cho toàn bộ nhóm nếu chưa bị reserve.")
     @ApiResponses({
             @ApiResponse(responseCode = "204", description = "Đã rời hàng chờ"),
             @ApiResponse(responseCode = "401", description = "Thiếu X-User-Id", content = @Content),

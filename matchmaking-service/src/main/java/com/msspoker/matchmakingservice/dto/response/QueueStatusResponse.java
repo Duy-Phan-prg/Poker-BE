@@ -8,7 +8,7 @@ import java.util.UUID;
 
 @Schema(description = "Trạng thái hàng chờ hoặc kết quả tạo bàn gần nhất")
 public record QueueStatusResponse(
-        @Schema(description = "Trạng thái workflow", allowableValues = {"NONE", "WAITING", "COUNTDOWN", "MATCHING", "CREATING_TABLE", "READY", "FAILED"}, example = "COUNTDOWN") String status,
+        @Schema(description = "Trạng thái workflow", allowableValues = {"NONE", "WAITING", "COUNTDOWN", "MATCHING", "PROPOSED", "CREATING_TABLE", "READY", "FAILED"}, example = "COUNTDOWN") String status,
         @Schema(description = "Chế độ hàng chờ", example = "NORMAL") MatchMode mode,
         @Schema(description = "Thời điểm vào hàng chờ theo UTC") Instant joinedAt,
         @Schema(description = "Vị trí hiện tại trong hàng chờ, bắt đầu từ 1", example = "1") Long position,
@@ -16,11 +16,12 @@ public record QueueStatusResponse(
         @Schema(description = "Số người tối thiểu để bắt đầu countdown", example = "2") Integer minPlayers,
         @Schema(description = "Đủ số người này thì tạo trận ngay", example = "6") Integer maxPlayers,
         @Schema(description = "Deadline UTC để tạo trận với 2–5 người") Instant matchStartDeadline,
+        @Schema(description = "Deadline UTC để chấp nhận proposal Rank") Instant acceptDeadline,
         @Schema(description = "Proposal đang xử lý") UUID proposalId,
         @Schema(description = "Bàn do Game Service tạo khi READY") UUID tableId,
         @Schema(description = "Match do Game Service tạo khi READY") UUID matchId
 ) {
     public static QueueStatusResponse none() {
-        return new QueueStatusResponse("NONE", null, null, null, null, null, null, null, null, null, null);
+        return new QueueStatusResponse("NONE", null, null, null, null, null, null, null, null, null, null, null);
     }
 }

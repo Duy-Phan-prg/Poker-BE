@@ -49,6 +49,24 @@ public enum MatchmakingError {
     // Người chơi đang được tạo bàn hoặc đang ở trong một trận.
     MM_MATCH_IN_PROGRESS,
 
+    // Người chơi đã là thành viên của một party.
+    MM_ALREADY_IN_PARTY,
+
+    // Không tìm thấy party hoặc mã party không hợp lệ.
+    MM_PARTY_NOT_FOUND,
+
+    // Người chơi không phải thành viên của party.
+    MM_NOT_PARTY_MEMBER,
+
+    // Chỉ chủ party được thực hiện thao tác này.
+    MM_NOT_PARTY_LEADER,
+
+    // Party đã đạt số thành viên tối đa.
+    MM_PARTY_FULL,
+
+    // Người chơi chưa được mời vào party.
+    MM_PARTY_INVITE_REQUIRED,
+
     // Lỗi nội bộ không xác định của Matchmaking service.
     MM_INTERNAL_ERROR
 }

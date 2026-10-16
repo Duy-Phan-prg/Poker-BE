@@ -1,8 +1,8 @@
 package com.msspoker.matchmakingservice.service.impl;
 
 import com.msspoker.matchmakingservice.enums.MatchMode;
-import com.msspoker.matchmakingservice.config.MatchmakingProperties;
 import com.msspoker.matchmakingservice.dto.response.TableCreatedResponse;
+import com.msspoker.matchmakingservice.dto.response.GameMatchSettingsResponse;
 import com.msspoker.matchmakingservice.entity.MatchProposalEntity;
 import com.msspoker.matchmakingservice.entity.MatchProposalPlayerEntity;
 import com.msspoker.matchmakingservice.enums.MatchmakingError;
@@ -13,6 +13,8 @@ import com.msspoker.matchmakingservice.model.InGameSession;
 import com.msspoker.matchmakingservice.repository.MatchProposalPlayerRepository;
 import com.msspoker.matchmakingservice.service.QueueStore;
 import com.msspoker.matchmakingservice.service.GameClient;
+import com.msspoker.matchmakingservice.service.PartyStore;
+import com.msspoker.matchmakingservice.model.PartySnapshot;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mapstruct.factory.Mappers;
@@ -24,6 +26,7 @@ import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.Optional;
+import java.util.List;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -38,17 +41,20 @@ class NormalMatchmakingServiceImplTest {
     @Mock private QueueStore queueStore;
     @Mock private MatchProposalPlayerRepository players;
     @Mock private GameClient game;
+    @Mock private PartyStore partyStore;
     private NormalMatchmakingServiceImpl service;
 
     @BeforeEach
     void setUp() {
+        lenient().when(game.matchSettings(MatchMode.NORMAL))
+                .thenReturn(new GameMatchSettingsResponse(MatchMode.NORMAL, 2, 6));
         service = new NormalMatchmakingServiceImpl(
                 queueStore,
                 players,
                 Clock.fixed(NOW, ZoneOffset.UTC),
                 Mappers.getMapper(QueueStatusMapper.class),
-                new MatchmakingProperties(),
-                game
+                game,
+                partyStore
         );
     }
 
@@ -100,6 +106,67 @@ class NormalMatchmakingServiceImplTest {
                         assertThat(exception.getCode()).isEqualTo(MatchmakingError.MM_MATCH_IN_PROGRESS));
 
         verify(queueStore, never()).enqueue(any());
+    }
+
+    @Test
+    void partyLeaderEnqueuesEveryMemberAtomically() {
+        UUID leader = UUID.randomUUID();
+        UUID member = UUID.randomUUID();
+        UUID partyId = UUID.randomUUID();
+        PartySnapshot party = new PartySnapshot(
+                partyId, "AB12CD34", leader, List.of(leader, member), NOW.minusSeconds(60)
+        );
+        when(partyStore.findByAccountId(leader)).thenReturn(Optional.of(party));
+        when(queueStore.enqueueParty(anyList())).thenReturn(true);
+        when(queueStore.position(leader, MatchMode.NORMAL)).thenReturn(Optional.of(1L));
+        when(queueStore.size(MatchMode.NORMAL)).thenReturn(2L);
+
+        var response = service.join(leader);
+
+        List<QueueEntry> expected = List.of(
+                new QueueEntry(leader, MatchMode.NORMAL, NOW, partyId),
+                new QueueEntry(member, MatchMode.NORMAL, NOW, partyId)
+        );
+        verify(queueStore).enqueueParty(expected);
+        assertThat(response.status()).isEqualTo("WAITING");
+        assertThat(response.playerCount()).isEqualTo(2);
+    }
+
+    @Test
+    void regularPartyMemberCannotStartSearching() {
+        UUID leader = UUID.randomUUID();
+        UUID member = UUID.randomUUID();
+        when(partyStore.findByAccountId(member)).thenReturn(Optional.of(new PartySnapshot(
+                UUID.randomUUID(), "AB12CD34", leader, List.of(leader, member), NOW
+        )));
+
+        assertThatThrownBy(() -> service.join(member))
+                .isInstanceOfSatisfying(MatchmakingApiException.class, exception ->
+                        assertThat(exception.getCode()).isEqualTo(MatchmakingError.MM_NOT_PARTY_LEADER));
+
+        verify(queueStore, never()).enqueueParty(anyList());
+        verify(queueStore, never()).enqueue(any());
+    }
+
+    @Test
+    void partyLeaderCancelsEveryMemberAtomically() {
+        UUID leader = UUID.randomUUID();
+        UUID member = UUID.randomUUID();
+        UUID partyId = UUID.randomUUID();
+        QueueEntry leaderEntry = new QueueEntry(leader, MatchMode.NORMAL, NOW, partyId);
+        QueueEntry memberEntry = new QueueEntry(member, MatchMode.NORMAL, NOW, partyId);
+        when(partyStore.findByAccountId(leader)).thenReturn(Optional.of(new PartySnapshot(
+                partyId, "AB12CD34", leader, List.of(leader, member), NOW
+        )));
+        when(queueStore.find(leader)).thenReturn(Optional.of(leaderEntry));
+        when(queueStore.find(member)).thenReturn(Optional.of(memberEntry));
+        when(queueStore.cancelParty(List.of(leaderEntry, memberEntry)))
+                .thenReturn(QueueStore.CancelResult.CANCELLED);
+
+        service.leave(leader);
+
+        verify(queueStore).cancelParty(List.of(leaderEntry, memberEntry));
+        verify(queueStore).cancelCountdown(MatchMode.NORMAL);
     }
 
     @Test

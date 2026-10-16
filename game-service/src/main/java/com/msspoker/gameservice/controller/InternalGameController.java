@@ -4,8 +4,12 @@ import com.msspoker.gameservice.dto.request.CreateTableRequest;
 import com.msspoker.gameservice.dto.response.MatchHistoryResponse;
 import com.msspoker.gameservice.dto.response.PageResponse;
 import com.msspoker.gameservice.dto.response.TableCreatedResponse;
+import com.msspoker.gameservice.dto.response.MatchSettingsResponse;
+import com.msspoker.gameservice.enums.GameMode;
 import com.msspoker.gameservice.service.MatchPersistenceService;
+import com.msspoker.gameservice.service.SettingsService;
 import com.msspoker.gameservice.service.TableService;
+import com.msspoker.gameservice.mapper.GameMapper;
 
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.*;
@@ -21,6 +25,13 @@ import java.util.Optional;
 public class InternalGameController {
     private final TableService tables;
     private final MatchPersistenceService matches;
+    private final SettingsService settings;
+    private final GameMapper mapper;
+
+    @GetMapping("/match-settings/{mode}")
+    public MatchSettingsResponse matchSettings(@PathVariable GameMode mode) {
+        return mapper.settings(settings.defaults(mode));
+    }
 
     @PostMapping("/tables")
     public TableCreatedResponse create(@Valid @RequestBody CreateTableRequest request) {

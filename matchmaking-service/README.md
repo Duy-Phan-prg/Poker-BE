@@ -1,7 +1,7 @@
 # matchmaking-service
 
-Service ghép trận tại port `8083`. Trạng thái hiện tại: hàng chờ `NORMAL` đã có code;
-`RANK`, proposal accept và Party chưa được bật.
+Service ghép trận tại port `8083`. Trạng thái hiện tại: `NORMAL` hỗ trợ người chơi solo và Party;
+`RANK` đã có queue, ghép Elo cố định, accept/decline, expiry, cooldown, Wallet saga và tạo bàn.
 
 ## Swagger / OpenAPI
 
@@ -10,18 +10,38 @@ Khi service đang chạy và `MATCHMAKING_SWAGGER_ENABLED=true` (mặc định �
 - Swagger UI: `http://localhost:8083/swagger-ui.html`
 - OpenAPI JSON: `http://localhost:8083/v3/api-docs`
 
-Swagger test trực tiếp service nên phải nhập `X-User-Id`; trong luồng thật header này do Gateway
-lấy từ JWT và gắn vào request. Swagger hiện mô tả bốn API của flow `NORMAL`. Nó chưa
-bao phủ Rank, proposal accept/decline/timeout, Wallet, notification/outbox, Party hoặc kiểm thử
-E2E qua Gateway. Có Swagger không đồng nghĩa các phần còn thiếu này đã được triển khai.
+Swagger test trực tiếp service nên phải nhập `X-User-Id`. Contract production yêu cầu Gateway lấy
+identity từ JWT rồi ghi đè header này, nhưng `api-gateway` hiện chưa có JWT filter của Auth; không
+được xem header client tự gửi là bảo mật production. Swagger hiện mô tả bốn API `NORMAL`, bốn API queue/reconnect `RANK`, hai API
+proposal và năm API quản lý Party. Nó chưa bao phủ notification/outbox hoặc
+kiểm thử E2E qua Gateway.
 
-Phân nhóm nghiệp vụ: `Normal matchmaking` là nhóm API hiện có; `Rank matchmaking` sẽ có endpoint
-riêng khi Đợt 3–5 hoàn thành. `Custom room` thuộc `competition-service`, không thuộc Swagger của
-Matchmaking.
+`Custom room` thuộc `competition-service`, không thuộc Swagger của Matchmaking.
+
+## API Party
+
+API giữ cách đặt tên hiện tại của module:
+
+```http
+POST   /api/party/create
+POST   /api/party/invite
+POST   /api/party/join
+POST   /api/party/kick
+DELETE /api/party/leave
+```
+
+Party được lưu trong Redis. Chỉ chủ party được mời hoặc kick; người được mời vào bằng mã gồm
+8 ký tự; tối đa mặc định 6 thành viên. Khi chủ rời, quyền chủ chuyển cho thành viên vào sớm nhất;
+người cuối cùng rời sẽ giải tán party.
+
+Chủ Party dùng chính `POST /api/matchmaking/normal/join` để đưa toàn bộ nhóm vào queue và dùng
+`DELETE /api/matchmaking/normal/leave` để hủy cho cả nhóm. Thành viên thường không được tự gọi
+hai thao tác này. Worker coi mỗi Party là một khối, không tách thành viên sang hai trận và dùng
+người chơi solo hoặc Party khác để lấp các ghế còn trống mà không vượt quá `maxPlayers`.
 
 ## API Normal
 
-Danh tính luôn lấy từ header `X-User-Id` do Gateway gắn.
+Danh tính lấy từ header `X-User-Id`; production chỉ được tin header sau khi Gateway JWT filter hoàn tất.
 
 ```http
 POST /api/matchmaking/normal/join
@@ -56,10 +76,41 @@ Trạng thái hiện tại có thể là `NONE`, `WAITING`, `COUNTDOWN`, `MATCHI
 hoặc `READY`. `FAILED` chỉ được giữ làm audit, không trả vô thời hạn từ API status.
 Normal không gọi Ranking/Wallet và không có popup accept.
 
+## API Rank
+
+```http
+POST   /api/matchmaking/rank/join
+GET    /api/matchmaking/rank/status
+GET    /api/matchmaking/rank/reconnect
+DELETE /api/matchmaking/rank/leave
+POST   /api/matchmaking/proposals/{proposalId}/accept
+POST   /api/matchmaking/proposals/{proposalId}/decline
+X-User-Id: <account UUID>
+```
+
+Rank chỉ nhận người chơi solo; account đang thuộc Party sẽ bị từ chối. Join lấy snapshot
+`elo`, `winStreak`, `lossStreak` từ Ranking; Elo `0` hợp lệ. Worker dùng người chờ lâu nhất làm
+anchor, chỉ chọn account trong cửa sổ Elo cố định, sau đó ưu tiên độ lệch Elo, streak và
+`joinedAt`. Không mở rộng cửa sổ Elo theo thời gian.
+
+`minPlayers` và `maxPlayers` của cả Normal lẫn Rank được đọc từ Game Match Settings do Admin quản
+lý, mặc định `2–6`. Đủ `minPlayers` thì chạy fill countdown 10 giây; đủ `maxPlayers` thì tạo
+proposal ngay. Proposal Rank trả `PROPOSED` và `acceptDeadline` 10 giây. Người decline hoặc không
+accept bị cooldown 2 phút; người còn lại được requeue giữ `joinedAt` và snapshot Elo/streak.
+
+Khi tất cả accept, Matchmaking debit phí bằng key `rank-fee:{proposalId}:{accountId}`, rồi gọi Game
+với `sourceId=proposalId`. Debit hoặc Game thất bại chắc chắn sẽ refund bằng key
+`rank-refund:{proposalId}:{accountId}`; timeout dependency được recovery worker retry cùng key.
+
+Contract đã đối chiếu: Ranking và Game có implementation thật. `identity-service` và
+`wallet-service` trong nhánh hiện tại vẫn là scaffold, nên Docker Matchmaking mặc định bật stub cho
+hai dependency này. Khi hai service merge API thật, đặt `MATCHMAKING_RESTRICTION_STUB_ENABLED=false`
+và `MATCHMAKING_WALLET_STUB_ENABLED=false`.
+
 ## Cách hoạt động
 
 1. Join ghi entry vào Redis Sorted Set theo `joinedAt`.
-2. Worker lấy số người cũ nhất theo `MATCHMAKING_NORMAL_MIN_PLAYERS`.
+2. Worker đọc `minPlayers`/`maxPlayers` hiện tại từ Game Match Settings và lấy nhóm cũ nhất.
 3. Lua reserve cả nhóm nguyên tử để hai worker không lấy trùng account.
 4. PostgreSQL lưu proposal `CREATING_TABLE` và danh sách player.
 5. Gọi `POST game-service/internal/tables` với `mode=NORMAL`, `entryFee=0` và
@@ -76,9 +127,14 @@ Redis hiện chỉ hỗ trợ deployment standalone vì các Lua operation chạ
 | Biến | Mặc định |
 |---|---|
 | `SERVER_PORT` | `8083` |
-| `MATCHMAKING_NORMAL_MIN_PLAYERS` | `2` |
-| `MATCHMAKING_NORMAL_MAX_PLAYERS` | `6` |
 | `MATCHMAKING_NORMAL_FILL_TIMEOUT` | `10s` |
+| `MATCHMAKING_RANK_ELO_WINDOW` | `100` |
+| `MATCHMAKING_RANK_FILL_TIMEOUT` | `10s` |
+| `MATCHMAKING_RANK_ACCEPT_TIMEOUT` | `10s` |
+| `MATCHMAKING_RANK_COOLDOWN` | `2m` |
+| `MATCHMAKING_RANKING_STUB_ENABLED` | `false` |
+| `MATCHMAKING_RESTRICTION_STUB_ENABLED` | `false` (`true` mặc định trong Compose hiện tại) |
+| `MATCHMAKING_WALLET_STUB_ENABLED` | `false` (`true` mặc định trong Compose hiện tại) |
 | `GAME_PUBLIC_HOST` | `localhost` |
 | `GAME_PUBLIC_PORT` | `8082` |
 | `GAME_WEBSOCKET_PATH` | `/ws/game` |

@@ -5,7 +5,7 @@ import io.swagger.v3.oas.annotations.media.Schema;
 
 import java.util.UUID;
 
-@Schema(description = "Thông tin để client nối lại bàn Normal đang hoạt động")
+@Schema(description = "Thông tin để client nối lại bàn đang hoạt động")
 public record NormalReconnectResponse(
         @Schema(description = "Có bàn đang hoạt động để nối lại hay không", example = "true") boolean reconnectable,
         @Schema(description = "Trạng thái lưu trong Redis", allowableValues = {"IN_GAME", "NONE"}, example = "IN_GAME") String status,
@@ -18,7 +18,11 @@ public record NormalReconnectResponse(
         @Schema(description = "Đường dẫn WebSocket của Game", example = "/ws/game") String websocketPath
 ) {
     public static NormalReconnectResponse none() {
-        return new NormalReconnectResponse(false, "NONE", MatchMode.NORMAL, null, null, null, null, null, null);
+        return none(MatchMode.NORMAL);
+    }
+
+    public static NormalReconnectResponse none(MatchMode mode) {
+        return new NormalReconnectResponse(false, "NONE", mode, null, null, null, null, null, null);
     }
 
     public static NormalReconnectResponse active(
@@ -29,8 +33,20 @@ public record NormalReconnectResponse(
             int port,
             String websocketPath
     ) {
+        return active(MatchMode.NORMAL, proposalId, tableId, matchId, host, port, websocketPath);
+    }
+
+    public static NormalReconnectResponse active(
+            MatchMode mode,
+            UUID proposalId,
+            UUID tableId,
+            UUID matchId,
+            String host,
+            int port,
+            String websocketPath
+    ) {
         return new NormalReconnectResponse(
-                true, "IN_GAME", MatchMode.NORMAL, proposalId, tableId, matchId, host, port, websocketPath
+                true, "IN_GAME", mode, proposalId, tableId, matchId, host, port, websocketPath
         );
     }
 }

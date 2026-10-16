@@ -5,6 +5,7 @@ import com.msspoker.matchmakingservice.enums.MatchMode;
 import com.msspoker.matchmakingservice.model.QueueEntry;
 import com.msspoker.matchmakingservice.model.InGameSession;
 import com.msspoker.matchmakingservice.service.QueueStore;
+import com.msspoker.matchmakingservice.service.PartyStore;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -15,6 +16,7 @@ import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.utility.DockerImageName;
 
 import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
@@ -29,6 +31,7 @@ class RedisQueueStoreConcurrencyTest {
     private static GenericContainer<?> redis;
     private static LettuceConnectionFactory connectionFactory;
     private static RedisQueueStore store;
+    private static RedisPartyStore partyStore;
 
     @BeforeAll
     static void startRedis() {
@@ -46,6 +49,7 @@ class RedisQueueStoreConcurrencyTest {
         StringRedisTemplate template = new StringRedisTemplate(connectionFactory);
         template.afterPropertiesSet();
         store = new RedisQueueStore(template, new MatchmakingProperties());
+        partyStore = new RedisPartyStore(template);
     }
 
     @AfterAll
@@ -118,8 +122,57 @@ class RedisQueueStoreConcurrencyTest {
     }
 
     @Test
+    void rankSnapshotSurvivesRedisRoundTripAndRequeue() {
+        QueueEntry entry = QueueEntry.rank(
+                UUID.randomUUID(),
+                Instant.EPOCH.plusSeconds(20),
+                0,
+                4,
+                1
+        );
+        assertThat(store.enqueue(entry)).isTrue();
+        assertThat(store.find(entry.accountId())).contains(entry);
+        assertThat(store.oldest(MatchMode.RANK, 1)).containsExactly(entry);
+
+        assertThat(store.reserve(MatchMode.RANK, List.of(entry), UUID.randomUUID())).isTrue();
+        store.requeue(List.of(entry));
+
+        assertThat(store.find(entry.accountId())).contains(entry);
+        assertThat(store.reservation(entry.accountId())).isEmpty();
+        assertThat(store.cancel(entry.accountId(), MatchMode.RANK))
+                .isEqualTo(QueueStore.CancelResult.CANCELLED);
+    }
+
+    @Test
+    void discardAtomicallyRemovesRankPayloadAndReservation() {
+        QueueEntry entry = QueueEntry.rank(UUID.randomUUID(), Instant.now(), 1000, 1, 0);
+        assertThat(store.enqueue(entry)).isTrue();
+        assertThat(store.reserve(MatchMode.RANK, List.of(entry), UUID.randomUUID())).isTrue();
+
+        store.discard(List.of(entry));
+
+        assertThat(store.find(entry.accountId())).isEmpty();
+        assertThat(store.reservation(entry.accountId())).isEmpty();
+        assertThat(store.oldest(MatchMode.RANK, 1)).isEmpty();
+    }
+
+    @Test
+    void rankCooldownStoresServerDeadline() {
+        UUID accountId = UUID.randomUUID();
+        Instant deadline = Instant.now().plusSeconds(30).truncatedTo(ChronoUnit.MILLIS);
+
+        store.startRankCooldown(accountId, deadline);
+
+        assertThat(store.rankCooldown(accountId)).contains(deadline);
+    }
+
+    @Test
     void cancelRacingReserveAlwaysEndsInOneValidState() throws Exception {
-        QueueEntry entry = new QueueEntry(UUID.randomUUID(), MatchMode.NORMAL, Instant.now());
+        QueueEntry entry = new QueueEntry(
+                UUID.randomUUID(),
+                MatchMode.NORMAL,
+                Instant.now().truncatedTo(ChronoUnit.MILLIS)
+        );
         assertThat(store.enqueue(entry)).isTrue();
         CountDownLatch ready = new CountDownLatch(2);
         CountDownLatch start = new CountDownLatch(1);
@@ -155,6 +208,95 @@ class RedisQueueStoreConcurrencyTest {
         } finally {
             workers.shutdownNow();
         }
+    }
+
+    @Test
+    void partyLifecycleIsAtomicAndTransfersLeadership() {
+        UUID leader = UUID.randomUUID();
+        UUID firstMember = UUID.randomUUID();
+        UUID secondMember = UUID.randomUUID();
+        UUID partyId = UUID.randomUUID();
+        String partyCode = "AB12CD34";
+
+        assertThat(partyStore.create(partyId, partyCode, leader, Instant.EPOCH))
+                .isEqualTo(PartyStore.CreateResult.CREATED);
+        assertThat(partyStore.invite(leader, firstMember, java.time.Duration.ofMinutes(15)))
+                .isEqualTo(PartyStore.InviteResult.INVITED);
+        assertThat(partyStore.join(firstMember, partyCode, 6, Instant.EPOCH.plusSeconds(1)))
+                .isEqualTo(PartyStore.JoinResult.JOINED);
+        assertThat(partyStore.invite(leader, secondMember, java.time.Duration.ofMinutes(15)))
+                .isEqualTo(PartyStore.InviteResult.INVITED);
+        assertThat(partyStore.join(secondMember, partyCode, 6, Instant.EPOCH.plusSeconds(2)))
+                .isEqualTo(PartyStore.JoinResult.JOINED);
+
+        assertThat(partyStore.leave(leader)).isEqualTo(PartyStore.LeaveResult.LEFT);
+        assertThat(partyStore.findByAccountId(firstMember).orElseThrow().leaderId()).isEqualTo(firstMember);
+        assertThat(partyStore.kick(firstMember, secondMember)).isEqualTo(PartyStore.KickResult.KICKED);
+        assertThat(partyStore.findByAccountId(secondMember)).isEmpty();
+        assertThat(partyStore.leave(firstMember)).isEqualTo(PartyStore.LeaveResult.DISBANDED);
+        assertThat(partyStore.findByAccountId(firstMember)).isEmpty();
+    }
+
+    @Test
+    void partyQueueIsEnqueuedAndCancelledAsOneAtomicUnit() {
+        UUID partyId = UUID.randomUUID();
+        UUID leader = UUID.randomUUID();
+        UUID firstMember = UUID.randomUUID();
+        UUID secondMember = UUID.randomUUID();
+        List<QueueEntry> entries = List.of(
+                new QueueEntry(leader, MatchMode.NORMAL, Instant.EPOCH.plusSeconds(21), partyId),
+                new QueueEntry(firstMember, MatchMode.NORMAL, Instant.EPOCH.plusSeconds(21), partyId),
+                new QueueEntry(secondMember, MatchMode.NORMAL, Instant.EPOCH.plusSeconds(21), partyId)
+        );
+        assertThat(partyStore.create(partyId, "PQ12RS34", leader, Instant.EPOCH))
+                .isEqualTo(PartyStore.CreateResult.CREATED);
+        assertThat(partyStore.invite(leader, firstMember, java.time.Duration.ofMinutes(15)))
+                .isEqualTo(PartyStore.InviteResult.INVITED);
+        assertThat(partyStore.join(firstMember, "PQ12RS34", 6, Instant.EPOCH.plusSeconds(1)))
+                .isEqualTo(PartyStore.JoinResult.JOINED);
+        assertThat(partyStore.invite(leader, secondMember, java.time.Duration.ofMinutes(15)))
+                .isEqualTo(PartyStore.InviteResult.INVITED);
+        assertThat(partyStore.join(secondMember, "PQ12RS34", 6, Instant.EPOCH.plusSeconds(2)))
+                .isEqualTo(PartyStore.JoinResult.JOINED);
+
+        assertThat(store.enqueueParty(entries)).isTrue();
+        assertThat(store.oldest(MatchMode.NORMAL, 3)).containsExactlyInAnyOrderElementsOf(entries);
+        entries.forEach(entry -> assertThat(store.find(entry.accountId())).contains(entry));
+        assertThat(partyStore.kick(leader, secondMember)).isEqualTo(PartyStore.KickResult.PARTY_QUEUED);
+        assertThat(partyStore.leave(firstMember)).isEqualTo(PartyStore.LeaveResult.PARTY_QUEUED);
+
+        assertThat(store.cancelParty(entries)).isEqualTo(QueueStore.CancelResult.CANCELLED);
+        entries.forEach(entry -> assertThat(store.find(entry.accountId())).isEmpty());
+        assertThat(partyStore.leave(secondMember)).isEqualTo(PartyStore.LeaveResult.LEFT);
+        assertThat(partyStore.leave(firstMember)).isEqualTo(PartyStore.LeaveResult.LEFT);
+        assertThat(partyStore.leave(leader)).isEqualTo(PartyStore.LeaveResult.DISBANDED);
+    }
+
+    @Test
+    void reservedPartyCannotBePartiallyCancelled() {
+        UUID partyId = UUID.randomUUID();
+        UUID leader = UUID.randomUUID();
+        UUID member = UUID.randomUUID();
+        List<QueueEntry> entries = List.of(
+                new QueueEntry(leader, MatchMode.NORMAL, Instant.EPOCH.plusSeconds(31), partyId),
+                new QueueEntry(member, MatchMode.NORMAL, Instant.EPOCH.plusSeconds(31), partyId)
+        );
+        assertThat(partyStore.create(partyId, "TU56VW78", leader, Instant.EPOCH))
+                .isEqualTo(PartyStore.CreateResult.CREATED);
+        assertThat(partyStore.invite(leader, member, java.time.Duration.ofMinutes(15)))
+                .isEqualTo(PartyStore.InviteResult.INVITED);
+        assertThat(partyStore.join(member, "TU56VW78", 6, Instant.EPOCH.plusSeconds(1)))
+                .isEqualTo(PartyStore.JoinResult.JOINED);
+        assertThat(store.enqueueParty(entries)).isTrue();
+        assertThat(store.reserve(MatchMode.NORMAL, entries, UUID.randomUUID())).isTrue();
+
+        assertThat(store.cancelParty(entries)).isEqualTo(QueueStore.CancelResult.RESERVED);
+        entries.forEach(entry -> assertThat(store.reservation(entry.accountId())).isPresent());
+
+        store.requeue(entries);
+        assertThat(store.cancelParty(entries)).isEqualTo(QueueStore.CancelResult.CANCELLED);
+        assertThat(partyStore.leave(member)).isEqualTo(PartyStore.LeaveResult.LEFT);
+        assertThat(partyStore.leave(leader)).isEqualTo(PartyStore.LeaveResult.DISBANDED);
     }
 
     private boolean reserveTogether(

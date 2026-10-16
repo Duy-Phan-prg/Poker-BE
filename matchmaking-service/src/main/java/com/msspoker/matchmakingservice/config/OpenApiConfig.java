@@ -18,13 +18,19 @@ public class OpenApiConfig {
                         .description("Đã có API: join, leave, status và reconnect."))
                 .addTagsItem(new Tag()
                         .name("Rank matchmaking")
-                        .description("Chưa triển khai: Elo matching, accept/decline, Wallet và cooldown."))
+                        .description("Join, leave, status và ghép theo cửa sổ Elo cố định; Party không được vào Rank."))
+                .addTagsItem(new Tag()
+                        .name("Rank proposals")
+                        .description("Accept/decline 10 giây, cooldown, Wallet saga và tạo bàn Rank."))
+                .addTagsItem(new Tag()
+                        .name("Normal party")
+                        .description("Quản lý Party và đưa cả nhóm vào queue Normal qua API join/leave hiện có."))
                 .info(new Info()
                         .title("MS Poker Matchmaking API")
-                        .version("Normal MVP")
-                        .description("API kiểm thử hàng chờ ghép trận. Custom Room thuộc competition-service, "
-                                + "không thuộc Matchmaking. RANK, accept/decline, Wallet, notification/outbox, "
-                                + "Party và E2E qua Gateway chưa hoàn tất.")
+                        .version("Normal + Party + Rank")
+                        .description("API kiểm thử hàng chờ Normal/Rank và quản lý Party. Custom Room thuộc competition-service, "
+                                + "không thuộc Matchmaking. Identity và Wallet thật chưa có implementation trong nhánh hiện tại; "
+                                + "notification/outbox và FE chưa hoàn tất.")
                         .license(new License().name("Internal use only")));
     }
 }

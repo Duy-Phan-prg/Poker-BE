@@ -12,7 +12,11 @@ import java.util.UUID;
 public interface QueueStore {
     boolean enqueue(QueueEntry entry);
 
+    boolean enqueueParty(List<QueueEntry> entries);
+
     CancelResult cancel(UUID accountId, MatchMode mode);
+
+    CancelResult cancelParty(List<QueueEntry> entries);
 
     Optional<QueueEntry> find(UUID accountId);
 
@@ -39,6 +43,12 @@ public interface QueueStore {
     void clearInGame(UUID accountId);
 
     void requeue(List<QueueEntry> entries);
+
+    void discard(List<QueueEntry> entries);
+
+    Optional<Instant> rankCooldown(UUID accountId);
+
+    void startRankCooldown(UUID accountId, Instant deadline);
 
     Optional<String> acquireFinderLock(MatchMode mode);
 

@@ -48,7 +48,7 @@ Service này được làm:
 
 - Quản lý hàng chờ `RANK` và `NORMAL`.
 - Lấy Elo hiện tại để ghép người chơi Rank.
-- Nới khoảng Elo theo thời gian chờ.
+- Ghép người chơi Rank trong khoảng Elo cố định theo config.
 - Tạo proposal, nhận accept/decline và xử lý timeout.
 - Thu phí Rank, hoàn phí nếu quy trình thất bại.
 - Gọi Game để tạo bàn sau khi proposal hợp lệ.
@@ -73,19 +73,19 @@ Phần thuộc `matchmaking-service` phải được triển khai đúng theo ch
 
 #### MVP
 
-- [ ] Hàng chờ Rank có API vào và hủy hàng chờ.
-- [ ] Lấy Elo và chuỗi thắng/thua từ `ranking-service`; không tự tính.
-- [ ] Ghép theo Elo và nới dần khoảng Elo khi thời gian chờ tăng.
-- [ ] Số người tối thiểu lấy từ config, không hard-code trong thuật toán.
-- [ ] Tạo proposal và cho người chơi chấp nhận trong đúng 10 giây.
-- [ ] Thu phí Rank qua Wallet sau khi tất cả thành viên chấp nhận.
-- [ ] Debit dùng key `rank-fee:{proposalId}:{accountId}`.
-- [ ] Một debit thất bại thì hoàn phí những người đã debit thành công.
-- [ ] Game CreateTable thất bại chắc chắn thì hoàn phí toàn bộ.
-- [ ] Người hợp lệ được đưa lại hàng chờ khi proposal thất bại/hết hạn.
-- [ ] Người decline hoặc không accept bị cooldown 2 phút theo config.
-- [ ] Hàng chờ Normal miễn phí và không gọi Wallet/Ranking.
-- [ ] Gọi `POST /internal/tables` của Game; không tự mở bàn.
+- [x] Hàng chờ Rank có API vào và hủy hàng chờ.
+- [x] Lấy Elo và chuỗi thắng/thua từ `ranking-service`; không tự tính.
+- [x] Ghép theo Elo trong khoảng cố định; Elo `0` vẫn được tham gia Rank.
+- [x] Số người tối thiểu/tối đa lấy từ Match Settings của Game, không hard-code hoặc giữ bản cấu hình riêng trong Matchmaking.
+- [x] Tạo proposal và cho người chơi chấp nhận trong đúng 10 giây.
+- [x] Thu phí Rank qua Wallet sau khi tất cả thành viên chấp nhận.
+- [x] Debit dùng key `rank-fee:{proposalId}:{accountId}`.
+- [x] Một debit thất bại thì hoàn phí những người đã debit thành công.
+- [x] Game CreateTable thất bại chắc chắn thì hoàn phí toàn bộ.
+- [x] Người hợp lệ được đưa lại hàng chờ khi proposal thất bại/hết hạn.
+- [x] Người decline hoặc không accept bị cooldown 2 phút theo config.
+- [x] Hàng chờ Normal miễn phí và không gọi Wallet/Ranking.
+- [x] Gọi `POST /internal/tables` của Game; không tự mở bàn.
 - [ ] Phát `MATCH_FOUND` và `MATCH_READY` bằng `notification.requested` để
   `social-service` đẩy xuống frontend.
 - [ ] FE `features/matchmaking` có màn chờ và popup chấp nhận; phần FE được làm sau
@@ -93,9 +93,9 @@ Phần thuộc `matchmaking-service` phải được triển khai đúng theo ch
 
 #### Giai đoạn 2
 
-- [ ] Party: tạo, mời, kick, rời và chuyển chủ nếu hợp đồng được chốt.
-- [ ] Chỉ chủ Party được đưa Party vào hàng chờ Normal.
-- [ ] Party thiếu người được ghép thêm người lạ.
+- [x] Party: tạo, mời, kick, rời và tự chuyển chủ cho thành viên vào sớm nhất.
+- [x] Chỉ chủ Party được đưa Party vào hoặc rời hàng chờ Normal.
+- [x] Party được reserve nguyên khối; thiếu người thì ghép thêm người solo hoặc Party khác.
 
 #### Ngoài phạm vi Matchmaking
 
@@ -116,7 +116,7 @@ thay thế nhau bằng profile/config; không viết `if (dev)` trong business s
 |---|---|---|
 | Game CreateTable | Gọi `POST /internal/tables` | Trả `tableId` ngẫu nhiên; có thể phát `match.finished` giả sau 10 giây trong dev tool |
 | Ranking | Gọi `GET /internal/ranking/{accountId}` | Trả Elo `0`, streak `0` |
-| Wallet | Gọi balance/debit/credit thật | Luôn thành công nhưng vẫn kiểm tra idempotency key trong test |
+| Wallet | Gọi debit/credit thật; chưa gọi balance vì service chưa có contract chạy được | Luôn thành công nhưng vẫn giữ idempotency key |
 | Identity restrictions | Gọi restrictions thật | Trả không bị cấm |
 
 Mock chỉ được bật bằng profile `dev` hoặc trong test. Profile production không được
@@ -401,8 +401,14 @@ POST /internal/wallet/credit
 ### Game
 
 ```http
+GET  /internal/match-settings/{mode}
 POST /internal/tables
 ```
+
+- Game Match Settings là nguồn sự thật cho `minPlayers` và `maxPlayers` của từng mode.
+- Bản ghi mặc định của `NORMAL` và `RANK` là `minPlayers = 2`, `maxPlayers = 6`.
+- Admin thay đổi Match Settings thì worker phải dùng giá trị mới cho những lượt ghép tiếp theo.
+- Không dùng giá trị mặc định cục bộ khi không đọc được Game; giữ người chơi trong queue và trả lỗi dependency rõ ràng để tránh Game từ chối bàn do lệch cấu hình.
 
 ```json
 {
@@ -479,21 +485,25 @@ atomic update. Request accept lặp lại phải trả kết quả hiện tại,
 
 ## 9. Luồng Rank
 
-1. Nhận yêu cầu vào queue; kiểm tra mode, cooldown và chưa có queue/proposal khác.
-2. Gọi restrictions, Ranking và Wallet balance.
-3. Ghi entry vào Redis với snapshot Elo và thời điểm chờ.
-4. Match finder chạy định kỳ, lấy lock theo mode và chọn nhóm phù hợp.
-5. Reserve atomically toàn bộ thành viên; không reserve được thì bỏ nhóm và thử lại.
-6. Tạo proposal PostgreSQL trước, sau đó ghi cache TTL 10 giây.
-7. Phát `MATCH_FOUND`.
-8. Khi tất cả accept, đổi proposal sang `CHARGING`.
-9. Debit từng người bằng idempotency key ổn định và lưu kết quả từng người.
-10. Nếu một debit thất bại, refund những người đã debit và đưa người hợp lệ về queue.
-11. Nếu debit đủ, gọi Game CreateTable bằng `sourceId = proposalId`.
-12. Nếu Game timeout, retry cùng sourceId trước khi quyết định refund.
-13. Nếu tạo bàn thành công, lưu tableId/matchId, chuyển `READY`, xóa reservation và
+1. Nhận yêu cầu vào queue; kiểm tra cooldown, không thuộc Party và chưa có queue/proposal khác.
+2. Gọi restrictions và Ranking. Elo `0` hợp lệ; Elo dùng để ghép, không phải điều kiện mở khóa Rank.
+   Nhánh hiện tại chưa có contract balance thật từ `wallet-service`; số dư được xác nhận nguyên tử
+   bằng debit sau khi tất cả người chơi accept để tránh lỗi TOCTOU.
+3. Ghi entry vào Redis với snapshot Elo/streak và thời điểm chờ.
+4. Match finder đọc `minPlayers`/`maxPlayers` hiện tại từ Game Match Settings rồi chọn người chờ lâu nhất làm anchor.
+5. Lọc ứng viên trong Elo window cố định; ưu tiên Elo gần anchor, streak là tiêu chí phụ và `joinedAt` phá hòa.
+6. Khi đủ `minPlayers`, bắt đầu fill countdown; tiếp tục nhận người và tạo nhóm ngay khi đủ `maxPlayers`.
+7. Hết fill countdown với từ `minPlayers` đến `maxPlayers` thì reserve atomically toàn bộ nhóm. Nếu tụt dưới `minPlayers` thì reset countdown.
+8. Tạo proposal PostgreSQL với `acceptDeadline` 10 giây; Redis reservation chỉ là dữ liệu tạm.
+9. Phát `MATCH_FOUND`.
+10. Khi tất cả accept, đổi proposal sang `CREATING_TABLE`; cờ phí từng player lưu tiến độ saga.
+11. Debit từng người bằng idempotency key ổn định và lưu kết quả từng người.
+12. Nếu một debit thất bại, refund những người đã debit và đưa người hợp lệ về queue.
+13. Nếu debit đủ, gọi Game CreateTable bằng `sourceId = proposalId`.
+14. Nếu Game timeout, retry cùng sourceId trước khi quyết định refund.
+15. Nếu tạo bàn thành công, lưu tableId/matchId, chuyển `READY`, xóa reservation và
     phát `MATCH_READY`.
-14. Nếu chắc chắn tạo bàn thất bại, refund toàn bộ rồi kết thúc proposal.
+16. Nếu chắc chắn tạo bàn thất bại, refund toàn bộ rồi kết thúc proposal.
 
 ## 10. Luồng Normal
 
@@ -509,10 +519,8 @@ Thông số phải nằm trong config, không hard-code:
 
 ```properties
 matchmaking.rank.entry-fee=100
-matchmaking.rank.players-per-match=6
-matchmaking.rank.initial-elo-window=100
-matchmaking.rank.elo-window-step=50
-matchmaking.rank.expand-every-seconds=15
+matchmaking.rank.elo-window=100
+matchmaking.rank.fill-timeout-seconds=10
 matchmaking.proposal.accept-timeout-seconds=10
 matchmaking.decline-cooldown-seconds=120
 matchmaking.finder.fixed-delay-ms=1000
@@ -521,13 +529,16 @@ matchmaking.finder.fixed-delay-ms=1000
 Quy tắc:
 
 - Chọn người chờ lâu nhất làm anchor.
-- Elo window hiện tại = initial window + số lần chờ qua mốc × step.
+- Elo window là ngưỡng cố định lấy từ config; không mở rộng theo thời gian chờ.
+- Elo `0` hợp lệ và không có ngưỡng Elo tối thiểu để vào Rank.
 - Ưu tiên Elo gần anchor, sau đó ưu tiên joinedAt cũ hơn.
 - `winStreak/lossStreak` chỉ là tiêu chí phụ; không được làm người chơi chờ vô hạn.
 - Không ghép một account hai lần; reservation phải atomic.
 - Khi chưa đủ người, giữ nguyên queue và chờ vòng tiếp theo.
-- Số người tối thiểu/tối đa phải phù hợp Match Settings của Game và được chốt trước
-  khi tích hợp. Không tự giả định khác hợp đồng Game.
+- Số người tối thiểu/tối đa lấy trực tiếp từ Match Settings của Game. Giá trị mặc định là `2–6`;
+  khi Admin cập nhật thì worker áp dụng cho lượt ghép tiếp theo.
+- Fill countdown và proposal accept timeout là hai timer khác nhau: timer đầu dùng để lấp bàn,
+  timer sau cho người chơi xác nhận proposal.
 
 ## 12. Xử lý lỗi và khả năng phục hồi
 
@@ -577,7 +588,7 @@ Không code Party chung với MVP Rank/Normal trong cùng đợt đầu.
 
 ### Unit test
 
-- Elo window mở rộng đúng theo thời gian.
+- Elo window cố định đúng config; Elo `0` vẫn được ghép.
 - Chọn đủ người, ưu tiên người chờ lâu và Elo gần.
 - Không đủ người thì không tạo proposal.
 - Accept trùng không tạo debit trùng.

@@ -15,4 +15,8 @@ public record CreateTableRequest(
     public static CreateTableRequest normal(UUID proposalId, List<UUID> playerIds) {
         return new CreateTableRequest(MatchMode.NORMAL, proposalId, List.copyOf(playerIds), null, 0);
     }
+
+    public static CreateTableRequest rank(UUID proposalId, List<UUID> playerIds, long entryFee) {
+        return new CreateTableRequest(MatchMode.RANK, proposalId, List.copyOf(playerIds), null, entryFee);
+    }
 }

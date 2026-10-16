@@ -15,8 +15,8 @@ repository hoặc bảng của chúng vào Matchmaking.
 
 - Hàng chờ `NORMAL`: vào/hủy hàng chờ, ghép theo thời gian chờ, miễn phí, không gọi
   Ranking/Wallet và không có popup accept theo đề xuất hiện tại của SPEC.
-- Hàng chờ `RANK`: lấy Elo/streak từ Ranking, ghép theo Elo, nới cửa sổ Elo khi
-  chờ lâu và lấy số người tối thiểu từ config.
+- Hàng chờ `RANK`: lấy Elo/streak từ Ranking, chấp nhận Elo `0`, ghép trong cửa sổ
+  Elo cố định và lấy `minPlayers`/`maxPlayers` từ Game Match Settings.
 - Proposal Rank có hạn 10 giây; mọi người accept mới bắt đầu thu phí.
 - Thu phí/hoàn phí qua Wallet bằng idempotency key; không tự sửa số dư.
 - Tạo bàn qua Game `POST /internal/tables`; không tự tạo bàn hoặc chạy poker engine.
@@ -58,15 +58,13 @@ hơn nếu chưa cập nhật SPEC và được service liên quan review.
    Ranking lấy `{elo, winStreak, lossStreak}`.
 2. Lưu payload tạm trong Redis Hash; đưa `accountId` vào Sorted Set với score là
    `joinedAt` epoch milliseconds.
-3. Worker chọn người chờ lâu nhất làm anchor. Cửa sổ hợp lệ là:
-
-   `allowedEloGap = initialGap + floor(waitSeconds / expansionInterval) * gapIncrement`
-
-4. Lọc ứng viên trong cửa sổ Elo của anchor. Elo là tiêu chí chính; streak chỉ là
+3. Worker đọc `minPlayers`/`maxPlayers` hiện tại từ Game Match Settings rồi chọn người
+   chờ lâu nhất làm anchor. Mặc định Game cung cấp `2–6`; Admin đổi thì dùng giá trị mới.
+4. Lọc ứng viên trong cửa sổ Elo cố định của anchor. Elo `0` hợp lệ. Elo là tiêu chí chính; streak chỉ là
    tiêu chí phụ để sắp ứng viên có Elo tương đương, không tự biến đổi Elo.
-5. Đủ `minPlayers` thì reserve nguyên tử các account. Chỉ một worker được tạo proposal
-   cho cùng một account.
-6. Ghi proposal và players vào PostgreSQL, đặt deadline 10 giây, phát `MATCH_FOUND`.
+5. Đủ `minPlayers` thì bắt đầu fill countdown; đủ `maxPlayers` thì tạo nhóm ngay, còn
+   hết countdown thì dùng nhóm hiện có. Reserve nguyên tử để chỉ một worker được tạo proposal.
+6. Ghi proposal và players vào PostgreSQL, đặt accept deadline 10 giây, phát `MATCH_FOUND`.
 7. Tất cả accept: debit từng người, gọi Game, lưu `tableId`/`matchId`, phát
    `MATCH_READY`.
 8. Decline/timeout/lỗi: thực hiện compensation, cooldown đúng đối tượng và requeue
@@ -87,9 +85,9 @@ audit terminal, không được trả như trạng thái hiện tại vô thời
 7. Gọi Game ngay sau khi reserve, không Ranking, không Wallet, không proposal accept.
 8. Game lỗi thì release reservation và requeue giữ thời điểm chờ cũ.
 
-Các giá trị `minPlayers`, `maxPlayers`, `normalFillTimeout`, `initialGap`, `gapIncrement`, `expansionInterval`,
-`acceptTimeout` và `cooldown` đều nằm trong `MatchmakingProperties`; không hard-code
-trong service/worker.
+`minPlayers` và `maxPlayers` thuộc Game Match Settings. `normalFillTimeout`, `rankFillTimeout`,
+Elo window cố định, `acceptTimeout` và `cooldown` thuộc `MatchmakingProperties`; không hard-code
+trong service/worker. Không giữ bản sao `minPlayers`/`maxPlayers` làm nguồn sự thật trong Matchmaking.
 
 ## 4. Các đợt triển khai
 
@@ -138,10 +136,10 @@ Ranking/Wallet; Game lỗi thì người chơi trở lại queue đúng thứ t�
 
 - `RankingClient` lấy Elo/streak; `RestrictionClient` kiểm tra cấm nếu contract đã sẵn.
 - Rank join từ chối khi cooldown, đang queued/proposed hoặc dependency trả lỗi.
-- Worker anchor người chờ lâu nhất, widening theo config, streak chỉ tie-break.
+- Worker dùng người chờ lâu nhất làm anchor, cửa sổ Elo cố định theo config, streak chỉ tie-break.
 - Ghi metric wait time và Elo spread của nhóm được chọn.
 
-Tiêu chí: unit test biên cửa sổ Elo, mỗi lần expansion, min players và fairness cho
+Tiêu chí: unit test biên cửa sổ Elo cố định, min players và fairness cho
 người chờ lâu; không có class nào tự tính/cập nhật Elo.
 
 ### Đợt 4 — proposal accept 10 giây
@@ -195,8 +193,11 @@ Tiêu chí: FE build/lint/test xanh và contract API khớp SPEC.
 
 ### Đợt 8 — GĐ2 Party
 
-Chỉ bắt đầu sau khi MVP ổn định và contract Party được cập nhật trong SPEC. Không trộn
-Party vào queue core trước đợt này.
+- [x] API quản lý Party: create, invite, join bằng mã, kick và leave/chuyển chủ.
+- [x] Dữ liệu Party và membership lưu Redis; thao tác nhiều key dùng Lua nguyên tử.
+- [x] Chỉ chủ party đưa cả nhóm vào queue Normal.
+- [x] Worker chọn/reserve party như một đơn vị, không tách thành viên sang hai trận.
+- [x] Ghép thêm người lạ hoặc Party khác khi nhóm chưa đủ `maxPlayers`.
 
 ## 5. Dependency contract và mock
 
@@ -217,18 +218,19 @@ không fallback âm thầm sang mock ở production.
 - [x] Thêm Springdoc và Swagger UI cho bốn API Normal hiện có: join, leave, status và reconnect.
 - [x] Mô tả header `X-User-Id`, request `NORMAL`, response status và các HTTP status chính.
 - [x] Cho phép tắt bằng `MATCHMAKING_SWAGGER_ENABLED=false`.
-- [ ] Swagger chưa có API Rank vì Đợt 3 chưa triển khai.
-- [ ] Swagger chưa có proposal accept/decline/timeout vì Đợt 4 chưa triển khai.
-- [ ] Swagger chưa mô tả Wallet debit/refund vì Đợt 5 chưa triển khai.
+- [x] Swagger có API Rank join, leave và status.
+- [x] Swagger có proposal accept/decline; expiry chạy bằng worker.
+- [x] Wallet debit/refund được triển khai qua HTTP client và idempotency key; Compose dùng stub
+  vì `wallet-service` hiện vẫn là scaffold.
 - [ ] Swagger không kiểm chứng notification/outbox/RabbitMQ vì Đợt 6 chưa triển khai.
 - [ ] Chưa có automated OpenAPI contract test để phát hiện breaking change.
 
-Swagger hiện là công cụ test contract HTTP của flow `NORMAL`; các mục hardening thuộc phạm vi
-Đợt 2 đã được kiểm chứng riêng bằng bộ test bên dưới.
+Swagger hiện là công cụ test contract HTTP của flow `NORMAL`, Party và Rank core; các mục
+hardening thuộc phạm vi Đợt 2 đã được kiểm chứng riêng bằng bộ test bên dưới.
 
 - [x] Đợt 0: dependency, cấu hình, Compose, Flyway V1 và exception chuẩn.
 - [x] Đợt 1 — phạm vi Normal: entity/repository proposal, DTO và MapStruct mapper;
-  context JPA/Flyway chạy qua. Domain Wallet/Rank sẽ bổ sung ở Đợt 3–5.
+  context JPA/Flyway chạy qua. Domain Wallet/Rank đã được bổ sung ở Đợt 3–5.
 - [x] Đợt 2 — Normal core đã hoàn thành trong phạm vi đã chốt:
   - [x] API join/leave/status/reconnect lấy danh tính từ `X-User-Id`.
   - [x] Trạng thái hiện tại `NONE`, `WAITING`, `COUNTDOWN`, `MATCHING`, `CREATING_TABLE`,
@@ -240,13 +242,16 @@ Swagger hiện là công cụ test contract HTTP của flow `NORMAL`; các mục
   - [x] `HttpGameClient` gọi Game với `sourceId = proposalId`; có `StubGameClient` cho dev/test.
   - [x] Game từ chối chắc chắn thì đánh dấu `FAILED` và requeue giữ `joinedAt` cũ.
   - [x] Timeout/5xx giữ `CREATING_TABLE`; recovery retry cùng `sourceId`.
-  - [x] Unit/context, controller contract và Testcontainers Redis concurrency: 30 test đều pass.
-- [ ] Đợt 3: Rank admission và matching worker.
-- [ ] Đợt 4: proposal accept/decline/timeout.
-- [ ] Đợt 5: Wallet saga và Game.
+  - [x] Unit/context, controller contract và Testcontainers Redis concurrency: 44 test đều pass.
+- [x] Đợt 3: Rank join/leave/status, Ranking/restriction snapshot, Elo `0`, cửa sổ Elo cố định,
+  Game Match Settings, fill countdown và cooldown Redis.
+- [x] Đợt 4: proposal accept/decline/timeout, khóa DB chống double-start và requeue theo kết quả.
+- [x] Đợt 5: Wallet debit/refund idempotent, compensation recovery và Game CreateTable Rank.
+  Tổng suite Matchmaking hiện có 77 test pass. Wallet/Identity production còn chờ hai service
+  scaffold cung cấp API thật; Compose đang dùng stub có ghi rõ.
 - [ ] Đợt 6: outbox/event/observability.
 - [ ] Đợt 7: FE.
-- [ ] Đợt 8: Party GĐ2.
+- [x] Đợt 8: quản lý Party và tích hợp Party với queue Normal.
 
 ### Cập nhật 2026-10-14 — MapStruct và cấu trúc package
 
@@ -312,7 +317,7 @@ requeue giữ nguyên `joinedAt`; unit test xác nhận finder lock được th�
 - Test RabbitMQ/outbox chỉ thực hiện khi chức năng event thực sự được triển khai; không thuộc
   phạm vi Normal core hiện tại.
 
-Kết quả hiện tại: `mvn -pl matchmaking-service -am test` chạy 30 test, 0 failure, 0 error.
+Kết quả hiện tại: `mvn -pl matchmaking-service -am test` chạy 44 test, 0 failure, 0 error.
 
 Tiêu chí hoàn tất: API status nhất quán với proposal DB, không ghép một account hai lần và các
 thao tác Redis nhiều key quan trọng đều nguyên tử.
@@ -324,8 +329,30 @@ thao tác Redis nhiều key quan trọng đều nguyên tử.
 3. [x] Làm Redis requeue/cleanup nguyên tử, tách Lua ra resource và thu hẹp finder lock.
 4. [ ] Dọn hoặc đánh dấu rõ code dành cho tương lai — backlog không chặn Đợt 2.
 5. [x] Bổ sung concurrency test và controller/API test.
-6. [x] Đóng Đợt 2 Normal core; Đợt 3 Rank chỉ bắt đầu khi được yêu cầu riêng.
+6. [x] Đóng Đợt 2 Normal core và triển khai Đợt 3 Rank core.
 
 Lý do: Normal kiểm chứng queue, reservation và Game integration mà chưa kéo theo Elo,
 deadline và compensation tiền. Khi lõi đó ổn, Rank chỉ bổ sung admission, selection,
 proposal và saga lên cùng nền.
+
+## 8. Audit phần thiếu và code dựng trước — 2026-10-16
+
+### THIẾU — đã có khung nhưng chưa triển khai
+
+- [ ] `wallet_operations`: migration đã tạo bảng nhưng chưa có Entity, Repository và Service ghi/đọc
+  operation. Không xem bảng này là đã triển khai cho đến khi Wallet saga thực sự sử dụng nó.
+- [ ] `matchmaking_outbox`: migration đã tạo bảng nhưng chưa có Entity, Repository,
+  `OutboxPublisher`, retry và cơ chế đánh dấu `published_at` sau publisher confirm.
+- [ ] RabbitMQ: đã có dependency, cấu hình và kết nối Compose nhưng chưa có publisher/consumer
+  thực tế cho `notification.requested`; chưa có kiểm thử RabbitMQ/outbox.
+
+### CẦN DỌN HOẶC GHI RÕ LÝ DO GIỮ
+
+- [ ] `MatchmakingError.MM_FORBIDDEN`: chưa có nhánh nghiệp vụ sử dụng; xóa hoặc triển khai đúng
+  trường hợp trả lỗi forbidden.
+- [ ] `MatchmakingIds`: hiện chỉ bọc `UUID.randomUUID()`; inline hoặc ghi rõ đây là điểm mở rộng
+  cho chính sách tạo ID chung.
+- [x] Package rỗng: `service/queue` và `service/worker` đã được xóa; không còn là phần thiếu.
+
+Quy ước trạng thái: có dependency/config/migration chỉ được tính là **khung chuẩn bị**. Một mục chỉ
+được đánh dấu hoàn thành khi có business code, persistence/publish path và test tương ứng.

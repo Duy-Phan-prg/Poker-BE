@@ -9,4 +9,10 @@ for i = 1, count do
     redis.call('ZADD', KEYS[1], joinedAt, account)
     redis.call('DEL', KEYS[offset + 3])
 end
+local partyCountOffset = 3 + (count * 3)
+local partyCount = tonumber(ARGV[partyCountOffset])
+for i = 1, partyCount do
+    local partyId = ARGV[partyCountOffset + i]
+    redis.call('SET', KEYS[1 + (count * 2) + i], partyId, 'PX', ARGV[2])
+end
 return count
